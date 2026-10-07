@@ -576,15 +576,16 @@ function drawRow(el, e) {
   // right above it, as if the row grew upward: absolutely placed, so nothing moves (the surface
   // does it, no hook runs), and gone when the pointer leaves
   if (desk) {
-    const { svg, width: w, height, base } = rowSvg(r)
+    const { svg, width: w, height } = rowSvg(r)
     const kids = [el.Svg({ source: svg, alt: describe(r), width: w, height })]
     if (steps.length) {
-      // the card is one image exactly as wide as the row, placed at the row's left edge: its
-      // middle is the row's middle, which is the band's middle, whatever the row says
-      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })), base)
-      kids.push(el.Box({ position: 'absolute', bottom: 1, left: 0, display: 'none', hover: { display: 'flex' }, children: [el.Svg({ source: card.svg, alt: steps.map((t) => t.title).join(', '), width: card.width, height: card.height })] }))
+      // the card is drawn at its own size, never wider than the frame the desktop puts round it
+      // (so never scaled down), and centred over the row: an absolute Box with no left or right
+      // sits where it would in the flow, which alignItems centres
+      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })))
+      kids.push(el.Box({ position: 'absolute', bottom: 1, display: 'none', hover: { display: 'flex' }, children: [el.Svg({ source: card.svg, alt: steps.map((t) => t.title).join(', '), width: card.width, height: card.height })] }))
     }
-    return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', children: kids })] })
+    return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', alignItems: 'center', children: kids })] })
   }
   const spans = rowSpans(r, width)
   const row = el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })

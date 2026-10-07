@@ -14,9 +14,9 @@ const TRACK = '#4a4f5c'
 // Light-mode stops, then dark-mode ones; the first repeats last so a flowing bar loops seamlessly
 export const RAINBOW = ['#e03131', '#f76707', '#e67700', '#2f9e44', '#1c7ed6', '#7048e8', '#c2255c', '#e03131']
 const RAINBOW_DARK = ['#ff6b6b', '#ffa94d', '#ffd43b', '#69db7c', '#4dabf7', '#9775fa', '#f783ac', '#ff6b6b']
-// The desktop images draw at this many CSS px per unit: 13px type comes out about 15px, near the
-// app's own body text (Neo, 2026-10-06: "这个字有点小")
-export const SCALE = 1.18
+// The row draws 1:1, the same 13px as usage-band's band (Neo, 2026-10-06: 1.18x read larger than
+// the band). The steps card has its own larger type instead, see CARD.
+export const SCALE = 1
 const scaled = (v) => Math.ceil(v * SCALE)
 
 // A rainbow running from x1 to x2 in the image's own units; `flow` slides it along forever
@@ -57,12 +57,12 @@ export function rowOf(g, p, etaMs, isRecent, work = null) {
   if (!g.planned && !g.planAt) return { state: 'planning', title, detail: '列步骤中…' }
   return {
     state: 'running',
-    title: clip(g.title, g.step ? 24 : 40),
+    title: clip(g.title, g.step ? 16 : 40),
     // the step under way, named in the row so nobody has to hover to see it
-    step: g.step ? clip(g.step, 24) : '',
+    step: g.step ? clip(g.step, 14) : '',
     fraction: p.fraction,
     figure: `${p.doneN}/${p.n} · ${p.pct}%`,
-    detail: etaMs ? `剩约 ${minutes(etaMs)}` : p.doneN < 2 ? '做完 2 步后估时' : '',
+    detail: etaMs ? `剩约 ${minutes(etaMs)}` : '',
   }
 }
 
@@ -209,7 +209,11 @@ export function rowSpans(r, columns = 100) {
 // ---- desktop: the steps card, one SVG exactly as wide as the row it floats over, so its middle
 // is always the row's middle (the row is centred in the band) and it never shifts sideways
 
-const STEP = { h: 22, top: 8, size: 12.5 }
+// The desktop draws the card in a frame of its own: about 24px of padding round the image and no
+// wider than about 431px, an image wider than the room left scaled down to fit (three screenshots,
+// 2026-10-06). So the card stays within CARD.max and keeps no margin of its own.
+const STEP = { h: 23, top: 1, size: 14 }
+export const CARD = { min: 220, max: 380, pad: 2 }
 const MARK = { done: '✓', active: '▶', pending: '○' }
 
 // Cut text to fit `room` px, by the same measure the row uses
@@ -220,28 +224,32 @@ export const fit = (v, room, size) => {
   return chars.join('') + '…'
 }
 
-export function stepsSvg(steps, width) {
-  const h = STEP.top * 2 + steps.length * STEP.h - 6
+export function stepsSvg(steps) {
+  const tails = steps.map((t) => (t.tail ? textW(t.tail, STEP.size) + 12 : 0))
+  const want = Math.max(...steps.map((t, i) => 18 + textW(t.title, STEP.size) + tails[i]), 0) + CARD.pad * 2
+  const width = Math.round(Math.min(CARD.max, Math.max(CARD.min, want)))
+  const h = STEP.top * 2 + steps.length * STEP.h - 4
   const defs = []
   const rows = steps.map((s, i) => {
-    const y = STEP.top + i * STEP.h + 13
+    const y = STEP.top + i * STEP.h + 15
     const hue = s.status === 'done' ? HUE.done : s.status === 'active' ? '#f783ac' : null
     const mark = MARK[s.status] || '○'
     const tail = s.tail ? s.tail : ''
-    const tailW = tail ? textW(tail, STEP.size) + 10 : 0
-    const title = fit(s.title, width - 34 - tailW, STEP.size)
+    const x0 = CARD.pad
+    const tx = x0 + 18
+    const title = fit(s.title, width - tx - CARD.pad - tails[i], STEP.size)
     const markSvg = hue
-      ? `<text x="12" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(hue, -0.38)};--d:${lighten(hue, 0.25)}">${mark}</text>`
-      : `<text x="12" y="${y}" font-size="${STEP.size}" class="mute">${mark}</text>`
-    if (s.status === 'active') defs.push(rainbow(`rb-step${i}`, 30, 30 + textW(title, STEP.size)))
+      ? `<text x="${x0}" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(hue, -0.38)};--d:${lighten(hue, 0.25)}">${mark}</text>`
+      : `<text x="${x0}" y="${y}" font-size="${STEP.size}" class="mute">${mark}</text>`
+    if (s.status === 'active') defs.push(rainbow(`rb-step${i}`, tx, tx + textW(title, STEP.size)))
     const titleSvg = s.status === 'active'
-      ? `<text x="30" y="${y}" font-size="${STEP.size}" font-weight="600" fill="url(#rb-step${i})">${esc(title)}</text>`
-      : `<text x="30" y="${y}" font-size="${STEP.size}" class="mute">${esc(title)}</text>`
-    const tailSvg = tail ? `<text x="${width - 12}" y="${y}" font-size="${STEP.size}" text-anchor="end" class="mute">${esc(tail)}</text>` : ''
+      ? `<text x="${tx}" y="${y}" font-size="${STEP.size}" font-weight="600" fill="url(#rb-step${i})">${esc(title)}</text>`
+      : `<text x="${tx}" y="${y}" font-size="${STEP.size}" class="${s.status === 'pending' ? 'fig' : 'mute'}">${esc(title)}</text>`
+    const tailSvg = tail ? `<text x="${width - CARD.pad}" y="${y}" font-size="${STEP.size}" text-anchor="end" class="mute">${esc(tail)}</text>` : ''
     return markSvg + titleSvg + tailSvg
   })
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${scaled(width)}" height="${scaled(h)}" viewBox="0 0 ${width} ${h}" style="color-scheme:light dark;background:transparent">` +
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" style="color-scheme:light dark;background:transparent">` +
     HEAD + (defs.length ? `<defs>${defs.join('')}</defs>` : '') + rows.join('') + `</svg>`
-  return { svg, width: scaled(width), height: scaled(h) }
+  return { svg, width, height: h }
 }

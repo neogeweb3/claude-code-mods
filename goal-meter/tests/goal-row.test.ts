@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { SCALE, rowOf, rowSpans, rowSvg, textW } from '../hooks/row.mjs'
+import { CARD, SCALE, rowOf, rowSpans, rowSvg, stepsSvg, textW } from '../hooks/row.mjs'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -154,11 +154,14 @@ test('collapsed to one row; the steps float in a hover card that moves nothing, 
       expect(hidden).toContain('"justifyContent":"center"')
       expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
     } else {
-      // the card is an image exactly as wide as the row image, at its left edge
+      // the card keeps within the desktop's frame (never scaled down) and is centred by the
+      // column's alignItems, not pinned to the row's left edge
       const imgs = await ui.findAll({ type: 'Svg' })
       expect(imgs).toHaveLength(2)
-      expect(imgs[1]!.props.width).toBe(imgs[0]!.props.width)
+      expect(imgs[1]!.props.width).toBeLessThanOrEqual(CARD.max)
       expect(String(imgs[1]!.props.source)).toContain('改样式')
+      expect(hidden).toContain('"alignItems":"center"')
+      expect(hidden).not.toContain('"left":0')
     }
     expect(await ui.find({ type: 'Text', text: /^S\b|^L\b/ })).toBeUndefined()
     await ui.unmount()
@@ -263,4 +266,18 @@ test('a finished plan celebrates only in the first seconds after it ends', async
   expect(await svg()).toContain('rb-bar')
   await clock.advance(20000)
   expect(await svg()).not.toContain('rb-bar')
+})
+
+test('the row is drawn at usage-band\'s size; the card at its own larger type, never past the frame', async () => {
+  expect(SCALE).toBe(1)
+  expect(rowSvg(rowOf(goal(), prog, 0, false)).height).toBe(30)
+  const long = '这是一个非常非常长的步骤名字，长到一行放不下还要再长一点'
+  const card = stepsSvg([{ status: 'active', title: long, tail: '进行中 2m' }, { status: 'pending', title: '短', tail: '' }])
+  expect(card.width).toBe(CARD.max)
+  expect(card.svg).toContain('font-size="14"')
+  expect(card.svg).toContain('…')
+  // a short card is narrow, not padded out to the row's width
+  expect(stepsSvg([{ status: 'pending', title: '短', tail: '' }]).width).toBe(CARD.min)
+  // no margin of its own: the first mark sits at the card's edge
+  expect(card.svg).toContain(`x="${CARD.pad}"`)
 })
