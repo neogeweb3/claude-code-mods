@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { rowOf, rowSpans, rowSvg } from '../hooks/row.mjs'
+import { rowOf, rowSpans, rowSvg, textW } from '../hooks/row.mjs'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -78,10 +78,18 @@ test('collapsed to one row; the steps float in a hover card that moves nothing, 
     const hidden = JSON.stringify(scope)
     expect(hidden).toContain('"display":"none"')
     expect(hidden).toContain('"position":"absolute"')
+    // centred over the row, as if it grew out of it
+    expect(hidden).toMatch(/"position":"absolute"[^{}]*"justifyContent":"center"|"justifyContent":"center"[^{}]*"position":"absolute"/)
     expect(hidden).toContain('"hover":{"display":"flex"}')
     expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '改样式' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^S\b|^L\b/ })).toBeUndefined()
     await ui.unmount()
   }
+})
+
+test('Latin text is measured narrow enough not to be stretched apart', async () => {
+  // 'No goal' in Inter 13px is about 50px wide; the old flat guess gave 56+ and spread the letters
+  expect(textW('No goal')).toBeLessThan(54)
+  expect(textW('在 /tmp')).toBeGreaterThan(textW('a /tmp'))
 })

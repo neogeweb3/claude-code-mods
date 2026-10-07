@@ -52,12 +52,22 @@ export function describe(r) {
 
 const CAP = { top: 9.75, h: 10 }
 const D = { h: 30, inner: 7, size: 13, barW: 120, barH: 6, icon: 10 }
-// Advance widths in em for Inter with tabular figures (usage-band's table); wide CJK and
-// symbols take a full em, so a Chinese goal gets the room it needs
-const ADVANCE = { h: 0.58, d: 0.6, m: 0.9, K: 0.64, M: 0.84, '%': 0.84, '/': 0.36, '.': 0.27, ' ': 0.26, '·': 0.3, '✓': 0.7, '~': 0.6 }
+// Advance widths in em for Inter (SF Pro, the fallback, runs within a few %): measured classes,
+// not one flat guess, so Latin text is not stretched apart; wide CJK and symbols take a full em
+const NARROW = new Set([...'iljtf.,:;!|\'()[]/ '])
+const WIDE = new Set([...'mwMW@%'])
 export const textW = (v, size = D.size) =>
-  [...v].reduce((w, c) => w + (c >= '0' && c <= '9' ? 0.62 : c.codePointAt(0) >= 0x2e80 ? 1 : (ADVANCE[c] ?? 0.6)), 0) * size +
-  0.2 * Math.max(0, [...v].length - 1)
+  [...v].reduce((w, c) => {
+    if (c.codePointAt(0) >= 0x2e80) return w + 1
+    if (c >= '0' && c <= '9') return w + 0.62
+    if (c === ' ') return w + 0.26
+    if (NARROW.has(c)) return w + 0.3
+    if (WIDE.has(c)) return w + 0.86
+    if (c === '·' || c === '~' || c === '<' || c === '>') return w + 0.55
+    if (c === '✓') return w + 0.7
+    if (c >= 'A' && c <= 'Z') return w + 0.66
+    return w + 0.54
+  }, 0) * size
 
 const pinW = (v) => `textLength="${textW(v).toFixed(1)}" lengthAdjust="spacing"`
 const ink = (hue, x, v) =>

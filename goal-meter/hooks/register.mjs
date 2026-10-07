@@ -538,22 +538,28 @@ function drawRow(el, e) {
   // over the transcript above it: absolutely placed, so nothing moves (the surface does it, no
   // hook runs), and gone again when the pointer leaves
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  const cardW = Math.min(64, width - 4)
+  // The card sits centred right above the row, as if it grew out of it: an absolutely placed
+  // full-width strip (nothing moves) that centres the card, revealed while the pointer rests
   const card = el.Box({
-    position: 'absolute',
-    bottom: 1,
-    left: Math.max(0, Math.floor((width - cardW) / 2)),
-    width: cardW,
-    display: 'none',
-    hover: { display: 'flex' },
     flexDirection: 'column',
     borderStyle: 'round',
     borderColor: '#e58fb6',
     backgroundColor: '#1f2228',
     paddingX: 1,
-    children: steps.slice(0, 20).map((s) => stepRow(el, s, cardW - 4)),
+    children: steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6))),
   })
-  return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, card] })
+  const pop = el.Box({
+    position: 'absolute',
+    bottom: 1,
+    left: 0,
+    right: 0,
+    display: 'none',
+    hover: { display: 'flex' },
+    flexDirection: 'row',
+    justifyContent: 'center',
+    children: [card],
+  })
+  return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, pop] })
 }
 
 const STEP_HUE = { done: '#72cf9f', active: '#e58fb6' }
