@@ -78,10 +78,11 @@ test('collapsed to one row; the steps float in a hover card that moves nothing, 
     const hidden = JSON.stringify(scope)
     expect(hidden).toContain('"display":"none"')
     expect(hidden).toContain('"position":"absolute"')
-    // centred over the row, as if it grew out of it
-    expect(hidden).toMatch(/"position":"absolute"[^{}]*"justifyContent":"center"|"justifyContent":"center"[^{}]*"position":"absolute"/)
-    expect(hidden).toContain('"hover":{"display":"flex"}')
-    expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
+    // centred over the row, as if it grew out of it: on the desktop the card hangs off the
+    // centred row at its full width; in the terminal a full-width strip centres it
+    expect(hidden).toContain('"width":"100%"')
+    if (surface === 'terminal') expect(hidden).toContain('"justifyContent":"center"')
+    else expect(hidden).not.toContain('"borderStyle"')
     expect(await ui.find({ type: 'Text', text: '改样式' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^S\b|^L\b/ })).toBeUndefined()
     await ui.unmount()

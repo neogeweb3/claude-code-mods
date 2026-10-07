@@ -524,41 +524,27 @@ function drawRow(el, e) {
   const t = G && G.status === 'running' ? eta(G, now) : null
   const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G))
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
-  let row
-  if (desk) {
-    const { svg, width, height } = rowSvg(r)
-    row = el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Svg({ source: svg, alt: describe(r), width, height })] })
-  } else {
-    const spans = rowSpans(r, Math.max(40, (e.props && e.props.bodyColumns) || 100))
-    row = el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })
-  }
-  const steps = G && (G.status === 'running' || isRecent(G)) ? visibleTasks(G) : []
-  if (!steps.length) return row
-  // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
-  // over the transcript above it: absolutely placed, so nothing moves (the surface does it, no
-  // hook runs), and gone again when the pointer leaves
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  // The card sits centred right above the row, as if it grew out of it: an absolutely placed
-  // full-width strip (nothing moves) that centres the card, revealed while the pointer rests
-  const card = el.Box({
-    flexDirection: 'column',
-    borderStyle: 'round',
-    borderColor: '#e58fb6',
-    backgroundColor: '#1f2228',
-    paddingX: 1,
-    children: steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6))),
-  })
-  const pop = el.Box({
-    position: 'absolute',
-    bottom: 1,
-    left: 0,
-    right: 0,
-    display: 'none',
-    hover: { display: 'flex' },
-    flexDirection: 'row',
-    justifyContent: 'center',
-    children: [card],
-  })
+  const steps = G && (G.status === 'running' || isRecent(G)) ? visibleTasks(G) : []
+  const list = steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6)))
+  // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
+  // right above it, as if the row grew upward: absolutely placed, so nothing moves (the surface
+  // does it, no hook runs), and gone when the pointer leaves
+  if (desk) {
+    const { svg, width: w, height } = rowSvg(r)
+    const kids = [el.Svg({ source: svg, alt: describe(r), width: w, height })]
+    if (list.length) {
+      // the card hangs off the row itself, exactly as wide, so it is centred wherever the row
+      // is; the desktop frames a floating box on its own, so the card draws no border
+      kids.push(el.Box({ position: 'absolute', bottom: 1, left: 0, width: '100%', display: 'none', hover: { display: 'flex' }, flexDirection: 'column', paddingX: 1, children: list }))
+    }
+    return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', children: kids })] })
+  }
+  const spans = rowSpans(r, width)
+  const row = el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })
+  if (!list.length) return row
+  const card = el.Box({ flexDirection: 'column', borderStyle: 'round', borderColor: '#e58fb6', paddingX: 1, children: list })
+  const pop = el.Box({ position: 'absolute', bottom: 1, left: 0, width: '100%', display: 'none', hover: { display: 'flex' }, flexDirection: 'row', justifyContent: 'center', children: [card] })
   return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, pop] })
 }
 
