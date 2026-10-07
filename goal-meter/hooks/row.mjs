@@ -12,7 +12,7 @@ import { minutes, clip } from './fmt.mjs'
 export const HUE = { goal: '#b197fc', done: '#72cf9f' }
 const TRACK = '#4a4f5c'
 // Light-mode stops, then dark-mode ones; the first repeats last so a flowing bar loops seamlessly
-export const RAINBOW = ['#e03131', '#f76707', '#f59f00', '#2f9e44', '#1c7ed6', '#7048e8', '#c2255c', '#e03131']
+export const RAINBOW = ['#e03131', '#f76707', '#e67700', '#2f9e44', '#1c7ed6', '#7048e8', '#c2255c', '#e03131']
 const RAINBOW_DARK = ['#ff6b6b', '#ffa94d', '#ffd43b', '#69db7c', '#4dabf7', '#9775fa', '#f783ac', '#ff6b6b']
 // The desktop images draw at this many CSS px per unit: 13px type comes out about 15px, near the
 // app's own body text (Neo, 2026-10-06: "这个字有点小")
@@ -51,12 +51,15 @@ export function rowOf(g, p, etaMs, isRecent, work = null) {
   if (!running && work) return { state: 'working', title: '工作中', detail: work.calls ? `${work.calls} 个操作` : '' }
   if (!g || !(running || isRecent)) return { state: 'idle', title: '空闲' }
   const title = clip(g.title, 40)
-  if (g.status === 'met') return { state: 'done', title, figure: '完成 ✓', detail: minutes((g.endedAt || 0) - g.startedAt) }
+  // done: a full bar; for its first seconds (`celebrate`) a rainbow sweeps it, then it settles green
+  if (g.status === 'met') return { state: 'done', title, fraction: 1, celebrate: !!g.celebrate, figure: '完成 ✓', detail: `用时 ${minutes((g.endedAt || 0) - g.startedAt)}` }
   if (g.status !== 'running') return { state: 'stopped', title, figure: '已停止' }
   if (!g.planned && !g.planAt) return { state: 'planning', title, detail: '列步骤中…' }
   return {
     state: 'running',
-    title,
+    title: clip(g.title, g.step ? 24 : 40),
+    // the step under way, named in the row so nobody has to hover to see it
+    step: g.step ? clip(g.step, 24) : '',
     fraction: p.fraction,
     figure: `${p.doneN}/${p.n} · ${p.pct}%`,
     detail: etaMs ? `剩约 ${minutes(etaMs)}` : p.doneN < 2 ? '做完 2 步后估时' : '',
@@ -64,7 +67,7 @@ export function rowOf(g, p, etaMs, isRecent, work = null) {
 }
 
 export function describe(r) {
-  return [r.state === 'idle' || r.state === 'working' ? r.title : `任务：${r.title}`, r.figure, r.detail].filter(Boolean).join('，')
+  return [r.state === 'idle' || r.state === 'working' ? r.title : `任务：${r.title}`, r.figure, r.step && `正在：${r.step}`, r.detail].filter(Boolean).join('，')
 }
 
 // ---- desktop: one SVG in usage-band's style
@@ -132,20 +135,38 @@ export function rowSvg(r) {
     defs.push(rainbow('rb-title', x, x + textW(r.title)))
     put((px, v) => paint('rb-title', px, v), r.title)
   }
-  if (r.state === 'running') {
+  if (r.state === 'running' || done) {
     const y = (D.h - D.barH) / 2
     const rad = D.barH / 2
     const fillW = Math.max(r.fraction > 0 ? D.barH : 0, Math.min(D.barW, D.barW * r.fraction))
-    defs.push(rainbow('rb-bar', x, x + D.barW, true), `<clipPath id="c-goal"><rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}"/></clipPath>`)
-    parts.push(
-      `<rect x="${x}" y="${y}" width="${D.barW}" height="${D.barH}" rx="${rad}" class="track" style="--h:#9775fa"/>`,
-      `<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="url(#rb-bar)"/>`,
+    const shine = (times) =>
       `<g clip-path="url(#c-goal)"><rect y="${y}" width="18" height="${D.barH}" fill="url(#shine)">` +
-        `<animate attributeName="x" values="${x - 18};${x + D.barW};${x + D.barW}" keyTimes="0;0.62;1" dur="2.6s" repeatCount="indefinite"/></rect></g>`,
-    )
+      `<animate attributeName="x" values="${x - 18};${x + D.barW};${x + D.barW}" keyTimes="0;0.62;1" dur="${times ? '1.3s' : '2.6s'}" repeatCount="${times || 'indefinite'}" fill="freeze"/></rect></g>`
+    defs.push(`<clipPath id="c-goal"><rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}"/></clipPath>`)
+    parts.push(`<rect x="${x}" y="${y}" width="${D.barW}" height="${D.barH}" rx="${rad}" class="track" style="--h:${done ? HUE.done : '#9775fa'}"/>`)
+    if (done) {
+      parts.push(`<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="${lighten(HUE.done, -0.12)}"/>`)
+      if (r.celebrate) {
+        defs.push(rainbow('rb-bar', x, x + D.barW, true))
+        parts.push(
+          `<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="url(#rb-bar)">` +
+            `<animate attributeName="opacity" values="1;1;0" keyTimes="0;0.7;1" dur="3.2s" fill="freeze"/></rect>`,
+          shine(2),
+        )
+      }
+    } else {
+      defs.push(rainbow('rb-bar', x, x + D.barW, true))
+      parts.push(`<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="url(#rb-bar)"/>`, shine(0))
+    }
     x += D.barW + D.inner
   }
   if (r.figure) put(done ? (px, v) => ink(HUE.done, px, v) : fig, r.figure)
+  if (r.step) {
+    parts.push(rule(x))
+    x += 1 + D.inner
+    put((px, v) => `<text x="${px}" y="19.5" font-size="${D.size}" ${pinW(v)} class="ink" style="--l:${RAINBOW[6]};--d:${RAINBOW_DARK[6]}">${v}</text>`, '▶', 5)
+    put(fig, r.step)
+  }
   if (r.detail) {
     if (lit) {
       parts.push(rule(x))
@@ -180,6 +201,7 @@ export function rowSpans(r, columns = 100) {
     if (cells > filled) spans.push({ text: '■'.repeat(cells - filled), color: TRACK })
   }
   if (r.figure) spans.push({ text: '  ' + r.figure, color: hue })
+  if (r.step) spans.push({ text: ' · ▶ ', color: RAINBOW_DARK[6] }, { text: r.step })
   if (r.detail) spans.push({ text: (r.state === 'idle' ? '  ' : ' · ') + r.detail, dim: true })
   return spans
 }

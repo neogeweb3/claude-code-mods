@@ -17,7 +17,7 @@
 import { minutes, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
 import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
-import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf } from './plan.mjs'
+import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf, currentStep } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
 const PANE = 'goal-meter'
@@ -25,6 +25,7 @@ const RECENT_MS = 10 * 60000 // a finished goal stays on screen this long
 const OTHERS_MS = 12 * 3600000 // other chats' goals shown in /goals
 const REOPEN_MS = 5 * 60000 // a goal closed on its tasks reopens if Claude carries on this soon
 const NUDGE_AFTER = 4 // tool calls into a goal with no plan before the reminder
+const CELEBRATE_MS = 6000 // a finished plan's rainbow sweep plays only in renders this soon after
 const AUTO_NUDGE_AT = 3 // tool calls into a turn with no plan before the reminder outside /goal
 const WRITERS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
@@ -162,7 +163,7 @@ async function finishGoal($, how) {
   G.finishedBy = how
   await save($)
   const took = minutes(G.endedAt - G.startedAt)
-  $.ui.toast(`${G.kind === 'plan' ? 'Plan' : 'Goal'} done in ${took}: ${clip(mask(G.title), 60)}`)
+  $.ui.toast(`完成 ✓ ${clip(mask(G.title), 60)}，用时 ${took}`)
   $.ui.invalidate('ui.render')
 }
 
@@ -463,6 +464,7 @@ export function register(on) {
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
     if ((e.props && e.props.hasSurvey) || hidden) return below
+    now = await $.clock.now() // the row's clock (ETA, the finish sweep) reads the time it is drawn at
     const el = $.ui.resolve(e)
     const mine = drawRow(el, e)
     if (!below) return mine
@@ -564,7 +566,8 @@ function drawRow(el, e) {
   const p = G ? progress(G) : null
   const t = G && G.status === 'running' ? eta(G, now) : null
   const work = working && !(G && G.status === 'running') ? { calls: turnCalls } : null
-  const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G), work)
+  const celebrate = !!G && G.status === 'met' && now - (G.endedAt || 0) < CELEBRATE_MS
+  const r = rowOf(G ? { ...G, title: mask(G.title), step: mask(currentStep(G)), celebrate } : null, p, t ? t.ms : 0, isRecent(G), work)
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
   const steps = G && (r.state === 'running' || r.state === 'planning' || r.state === 'done' || r.state === 'stopped') ? visibleTasks(G) : []

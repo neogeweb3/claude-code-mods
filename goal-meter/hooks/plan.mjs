@@ -57,6 +57,13 @@ export function live(goal) {
   return goal.tasks.filter((t) => t.status !== 'dropped' && !t.replaced)
 }
 
+// The step the row names: the one running, else the next one up; '' when none is left
+export function currentStep(goal) {
+  const tasks = live(goal)
+  const t = tasks.find((x) => x.status === 'active') || tasks.find((x) => x.status === 'pending')
+  return t ? t.title : ''
+}
+
 export function progress(goal) {
   const tasks = live(goal)
   const total = tasks.reduce((a, t) => a + weight(t), 0)

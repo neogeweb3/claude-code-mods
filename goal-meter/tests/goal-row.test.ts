@@ -19,6 +19,7 @@ const prog = { fraction: 0.5, doneN: 2, n: 4, pct: 50 }
 
 test('with no plan the row is still there, idle, and never hints at /goal', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  mock.clock(on)
   const term = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
   expect(await term.find({ type: 'Text', text: '空闲' })).toBeDefined()
   expect(JSON.stringify(await term.find({ type: 'Box' }))).not.toContain('/goal')
@@ -87,16 +88,19 @@ test('no reminder once a plan is running', async ($, on) => {
 
 test('the row stacks on top of what another mod drew, never replacing it', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ children: ['5h 5%'] }))
+  mock.clock(on)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
     expect(await ui.find({ type: 'Text', text: '5h 5%' })).toBeDefined()
+    // and the goal row is really there too, above it
+    expect(await ui.find({ type: 'Box', key: 'goal-row' }) ?? await ui.find({ type: 'Text', text: '空闲' })).toBeDefined()
     await ui.unmount()
   }
 })
 
 test('a running goal is one row: title, bar, done of total, ETA', async () => {
   const r = rowOf(goal(), prog, 8 * 60000, false)
-  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', fraction: 0.5, figure: '2/4 · 50%', detail: '剩约 8m' })
+  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', step: '', fraction: 0.5, figure: '2/4 · 50%', detail: '剩约 8m' })
   const { svg, height } = rowSvg(r)
   // drawn larger than usage-band's 30px row: the type comes out about 15px
   expect(height).toBe(Math.ceil(30 * SCALE))
@@ -121,7 +125,7 @@ test('task sizes (S, M, L) never reach the row', async () => {
 
 test('planning, done and an old finished goal read as they should', async () => {
   expect(rowOf(goal({ planAt: 0 }), prog, 0, false).detail).toBe('列步骤中…')
-  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: '完成 ✓', detail: '12m' })
+  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: '完成 ✓', detail: '用时 12m' })
   // a new task after one finished reads working, not the old plan's done
   expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, true, { calls: 1 }).state).toBe('working')
   expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, false).state).toBe('idle')
@@ -199,4 +203,64 @@ test('a plan without /goal shows under the name Claude gave; a new name starts a
   expect(await ui.find({ type: 'Text', text: '修登录 bug' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /0\/3/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('the row names the step under way, else the next one, so nobody has to hover', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  mock.clock(on)
+  const tasks = (action: string, extra = {}) => $.tool.call({ tool: 'mcp__goal-meter__tasks', action, ...extra } as never)
+  await tasks('plan', { goal: '美化进度行', tasks: [{ title: '显示当前步骤', size: 'M' }, { title: '完成动画', size: 'M' }] })
+  const row = async (surface: 'terminal' | 'desktop') => {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
+    const imgs = surface === 'desktop' ? await ui.findAll({ type: 'Svg' }) : []
+    const text = surface === 'desktop' ? String(imgs[0]!.props.source) + imgs[0]!.props.alt : JSON.stringify(await ui.find({ type: 'Box', key: 'goal-row' }))
+    await ui.unmount()
+    return text
+  }
+  // nothing started yet: the next step up
+  expect(await row('terminal')).toContain('显示当前步骤')
+  await tasks('start', { id: 1 })
+  expect(await row('terminal')).toContain('▶ ')
+  expect(await row('desktop')).toContain('正在：显示当前步骤')
+  await tasks('done', { id: 1 })
+  const after = await row('desktop')
+  expect(after).toContain('完成动画')
+  expect(after).not.toContain('正在：显示当前步骤')
+})
+
+test('a plan just finished sweeps a rainbow over a full bar, then settles green', async () => {
+  const done = (celebrate: boolean) => rowSvg(rowOf(goal({ status: 'met', endedAt: 5 * 60000, celebrate }), prog, 0, true)).svg
+  const party = done(true)
+  expect(party).toContain('fill="url(#rb-bar)"')
+  expect(party).toContain('attributeName="opacity" values="1;1;0"')
+  expect(party).toContain('fill="freeze"')
+  const calm = done(false)
+  expect(calm).not.toContain('rb-bar')
+  expect(calm).not.toContain('<animate')
+  // the full bar is drawn in both
+  expect(calm).toContain('class="track"')
+  expect(rowOf(goal({ status: 'met', endedAt: 5 * 60000 }), prog, 0, true).detail).toBe('用时 5m')
+})
+
+test('a finished plan celebrates only in the first seconds after it ends', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const clock = mock.clock(on)
+  const svg = async () => {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'desktop', ...BAND })
+    const s = String((await ui.find({ type: 'Svg' }))!.props.source)
+    await ui.unmount()
+    return s
+  }
+  await clock.advance(60000) // the mock clock starts at 0, which reads as "never ended"
+  await $.turn.start({ text: '做', turnId: 't1' })
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'plan', goal: '小活', tasks: [{ title: '一步', size: 'S' }] } as never)
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'done', id: 1 } as never)
+  await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
+  expect(await svg()).toContain('rb-bar')
+  await clock.advance(20000)
+  expect(await svg()).not.toContain('rb-bar')
 })
