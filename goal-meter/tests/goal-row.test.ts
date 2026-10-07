@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { rowOf, rowSpans, rowSvg, textW } from '../hooks/row.mjs'
+import { SCALE, rowOf, rowSpans, rowSvg, textW } from '../hooks/row.mjs'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -17,15 +17,72 @@ const goal = (over = {}) => ({
 })
 const prog = { fraction: 0.5, doneN: 2, n: 4, pct: 50 }
 
-test('with no goal the row is still there, idle, on terminal and desktop', async ($, on) => {
+test('with no plan the row is still there, idle, and never hints at /goal', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
   const term = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
-  expect(await term.find({ type: 'Text', text: 'No goal' })).toBeDefined()
+  expect(await term.find({ type: 'Text', text: '空闲' })).toBeDefined()
+  expect(JSON.stringify(await term.find({ type: 'Box' }))).not.toContain('/goal')
   await term.unmount()
   const desk = await $.ui.mount({ plugin: 'goal-meter', surface: 'desktop', ...BAND })
   const svg = await desk.find({ type: 'Svg' })
-  expect(svg?.props.alt).toBe('No goal, /goal <what done looks like>')
+  expect(svg?.props.alt).toBe('空闲')
+  expect(String(svg?.props.source)).not.toContain('/goal')
   await desk.unmount()
+})
+
+test('a task with no plan yet reads "working" while the turn runs, idle again after', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  mock.clock(on)
+  const row = async () => {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
+    const text = JSON.stringify(await ui.find({ type: 'Box', key: 'goal-row' }) ?? await ui.find({ type: 'Box' }))
+    await ui.unmount()
+    return text
+  }
+  await $.turn.start({ text: '修一下这个 bug', turnId: 't1' })
+  expect(await row()).toContain('工作中')
+  await $.tool.call({ tool: 'Read', file_path: '/a' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
+  expect(await row()).toContain('2 个操作')
+  await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
+  const after = await row()
+  expect(after).toContain('空闲')
+  expect(after).not.toContain('工作中')
+})
+
+test('a turn a few tools deep with no plan gets one hidden reminder to plan, once', async ($, on) => {
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  mock.clock(on)
+  const call = () => $.tool.call({ tool: 'Bash', command: 'ls' } as never) as Promise<{ context?: readonly string[] }>
+  await $.turn.start({ text: '继续', turnId: 't1' })
+  expect((await call()).context).toBeUndefined()
+  expect((await call()).context).toBeUndefined()
+  const third = await call()
+  expect(third.context?.[0]).toContain('mcp__goal-meter__tasks')
+  expect(third.context?.[0]).toContain('"plan"')
+  expect((await call()).context).toBeUndefined()
+  // a new turn may be reminded again
+  await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
+  await $.turn.start({ text: '再来', turnId: 't2' })
+  await call(); await call()
+  expect((await call()).context).toHaveLength(1)
+})
+
+test('no reminder once a plan is running', async ($, on) => {
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  mock.clock(on)
+  await $.turn.start({ text: '做个功能', turnId: 't1' })
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'plan', goal: '做个功能', tasks: [{ title: '写', size: 'M' }] })
+  for (let i = 0; i < 5; i++) {
+    const r = (await $.tool.call({ tool: 'Bash', command: 'ls' } as never)) as { context?: readonly string[] }
+    expect(r.context).toBeUndefined()
+  }
 })
 
 test('the row stacks on top of what another mod drew, never replacing it', async ($, on) => {
@@ -39,14 +96,21 @@ test('the row stacks on top of what another mod drew, never replacing it', async
 
 test('a running goal is one row: title, bar, done of total, ETA', async () => {
   const r = rowOf(goal(), prog, 8 * 60000, false)
-  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', fraction: 0.5, figure: '2/4 · 50%', detail: '~8m left' })
+  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', fraction: 0.5, figure: '2/4 · 50%', detail: '剩约 8m' })
   const { svg, height } = rowSvg(r)
-  expect(height).toBe(30)
+  // drawn larger than usage-band's 30px row: the type comes out about 15px
+  expect(height).toBe(Math.ceil(30 * SCALE))
+  expect(svg).toContain('viewBox="0 0 ')
   expect(svg).toContain('<animate')
+  // a rainbow, flowing along the bar, on the title and the bar fill; no rose left
+  expect(svg).toContain('fill="url(#rb-title)"')
+  expect(svg).toContain('fill="url(#rb-bar)"')
+  expect(svg).toContain('animateTransform')
+  expect(svg).not.toContain('e58fb6')
   expect(svg).toContain('测试全绿并提交')
   expect(svg).toContain('2/4 · 50%')
   const spans = rowSpans(r, 120)
-  expect(spans.map(s => s.text).join('')).toBe('◎ 测试全绿并提交  ■■■■■■■■■■  2/4 · 50% · ~8m left')
+  expect(spans.map(s => s.text).join('')).toBe('◎ 测试全绿并提交  ■■■■■■■■■■  2/4 · 50% · 剩约 8m')
 })
 
 test('task sizes (S, M, L) never reach the row', async () => {
@@ -56,8 +120,10 @@ test('task sizes (S, M, L) never reach the row', async () => {
 })
 
 test('planning, done and an old finished goal read as they should', async () => {
-  expect(rowOf(goal({ planAt: 0 }), prog, 0, false).detail).toBe('planning…')
-  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: 'done ✓', detail: '12m' })
+  expect(rowOf(goal({ planAt: 0 }), prog, 0, false).detail).toBe('列步骤中…')
+  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: '完成 ✓', detail: '12m' })
+  // a new task after one finished reads working, not the old plan's done
+  expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, true, { calls: 1 }).state).toBe('working')
   expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, false).state).toBe('idle')
 })
 

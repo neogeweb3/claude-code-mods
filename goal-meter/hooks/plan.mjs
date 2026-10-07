@@ -249,11 +249,21 @@ export function autoPlan(tool) {
   return (
     `# Progress row\n` +
     `The user watches a progress row above the prompt, built from your task plan. ` +
-    `When a request needs several steps of work (roughly three or more steps that use tools), before you start call ${tool} ` +
-    `with action "plan", "goal" (a few words naming the whole task, in the user's language) and the steps in order, ` +
+    `When a request needs several steps of work (roughly three or more steps that use tools), call ${tool} ` +
+    `before your first other tool call, with action "plan", "goal" (a few words naming the whole task, in the user's language) and the steps in order, ` +
     `each with a short title in the user's language and a size S, M or L. ` +
+    `This includes picking up earlier work: "continue", resuming from a handoff, or fixing what the user just reported. ` +
     `Then call "start" with a step's id when you begin it and "done" when it is finished; "add" new steps you discover, ` +
     `"drop" ones no longer needed. A new, unrelated request gets a new "plan". ` +
     `Skip all of this for quick answers, single lookups and one-step edits.`
+  )
+}
+
+// Said once in a turn that has run a few tools with no plan: the row shows only "working" until one exists
+export function autoNudge(tool) {
+  return (
+    `This request is taking several tool calls and the progress row above the prompt has no plan to show. ` +
+    `If more work is ahead, call ${tool} with action "plan" now (a "goal" and the steps), then mark the steps already finished as done. ` +
+    `If you are about to answer, ignore this.`
   )
 }

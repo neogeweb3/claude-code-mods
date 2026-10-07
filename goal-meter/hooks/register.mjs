@@ -1,5 +1,7 @@
-// Goal Meter: a progress bar for /goal, built from Claude's own task plan.
-// - /goal starts it. The mod asks Claude to plan the goal as sized tasks (S, M, L)
+// Goal Meter: a progress bar built from Claude's own task plan, on by default.
+// - The system prompt asks Claude to plan any multi-step task; a turn that runs a few tools with
+//   no plan gets one hidden reminder. Until a plan exists the row says "working", never a /goal hint.
+// - /goal also starts it. The mod asks Claude to plan the goal as sized tasks (S, M, L)
 //   with the mod's tool, mcp__goal-meter__tasks, then mark each task started and
 //   done. Claude Code stopped shipping a task-list tool after 2.1.229, so the mod
 //   brings its own. A plan made outside a /goal shows the same way.
@@ -15,7 +17,7 @@
 import { minutes, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
 import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
-import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, titleOf } from './plan.mjs'
+import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
 const PANE = 'goal-meter'
@@ -23,6 +25,7 @@ const RECENT_MS = 10 * 60000 // a finished goal stays on screen this long
 const OTHERS_MS = 12 * 3600000 // other chats' goals shown in /goals
 const REOPEN_MS = 5 * 60000 // a goal closed on its tasks reopens if Claude carries on this soon
 const NUDGE_AFTER = 4 // tool calls into a goal with no plan before the reminder
+const AUTO_NUDGE_AT = 3 // tool calls into a turn with no plan before the reminder outside /goal
 const WRITERS = new Set(['Edit', 'Write', 'NotebookEdit', 'MultiEdit'])
 
 let G = null
@@ -36,6 +39,9 @@ let settings = { strict: false }
 let hidden = false
 let nudged = false
 let callsWithoutPlan = 0
+let working = false // a main turn is running
+let turnCalls = 0 // its tool calls so far, the mod's own left out
+let turnNudged = false
 let pendingGoal = null
 let paneOpen = false
 let others = []
@@ -308,6 +314,10 @@ export function register(on) {
 
   on('turn.start', async ($, e, next) => {
     now = await $.clock.now()
+    working = true
+    turnCalls = 0
+    turnNudged = false
+    $.ui.invalidate('ui.render')
     if (pendingGoal && (!G || G.startedAt < pendingGoal.at)) {
       const args = pendingGoal.args
       await startGoal($, args)
@@ -339,6 +349,18 @@ export function register(on) {
 
   on('tool.call', async ($, e, next) => {
     if (e.tool === toolName) return serveTool($, e)
+    if (!e.agentId && e.tool !== 'ToolSearch') {
+      turnCalls += 1
+      if (!(G && G.status === 'running')) $.ui.invalidate('ui.render')
+    }
+    // outside /goal: a turn a few tools deep with no plan gets one reminder, read after this
+    // call's result and never shown to the person
+    if (!e.agentId && !(G && G.status === 'running') && turnCalls >= AUTO_NUDGE_AT && !turnNudged) {
+      turnNudged = true
+      const r = await next(e)
+      if (!r || r.deny || !('result' in r)) return r
+      return { ...r, context: [...(r.context || []), autoNudge(toolName)] }
+    }
     if (G && G.status === 'running' && G.kind === 'goal' && !(G.planned || G.planAt) && !e.agentId) {
       if (settings.strict && WRITERS.has(e.tool)) return { deny: strictDeny(toolName) }
       if (e.tool !== 'ToolSearch') callsWithoutPlan += 1
@@ -382,6 +404,10 @@ export function register(on) {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     now = await $.clock.now()
+    if (!e.agentId) {
+      working = false
+      $.ui.invalidate('ui.render')
+    }
     if (e.agentId) {
       runningAgents.delete(e.agentId)
       if (G && G.status === 'running') $.ui.invalidate('ui.render')
@@ -507,8 +533,8 @@ function footerLabel() {
 
 function taskTail(t) {
   if (t.status === 'done') return t.doneAt > t.startedAt ? minutes(t.doneAt - t.startedAt) : ''
-  if (t.status === 'active') return (t.by ? t.by + ' · ' : '') + 'running ' + minutes(now - t.startedAt)
-  if (t.status === 'dropped') return 'dropped' + (t.note ? ': ' + t.note : '')
+  if (t.status === 'active') return (t.by ? t.by + ' · ' : '') + '进行中 ' + minutes(now - t.startedAt)
+  if (t.status === 'dropped') return '已放弃' + (t.note ? '：' + t.note : '')
   return ''
 }
 
@@ -537,21 +563,22 @@ function taskRow(el, t, width) {
 function drawRow(el, e) {
   const p = G ? progress(G) : null
   const t = G && G.status === 'running' ? eta(G, now) : null
-  const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G))
+  const work = working && !(G && G.status === 'running') ? { calls: turnCalls } : null
+  const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G), work)
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  const steps = G && (G.status === 'running' || isRecent(G)) ? visibleTasks(G) : []
+  const steps = G && (r.state === 'running' || r.state === 'planning' || r.state === 'done' || r.state === 'stopped') ? visibleTasks(G) : []
   const list = steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6)))
   // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
   // right above it, as if the row grew upward: absolutely placed, so nothing moves (the surface
   // does it, no hook runs), and gone when the pointer leaves
   if (desk) {
-    const { svg, width: w, height } = rowSvg(r)
+    const { svg, width: w, height, base } = rowSvg(r)
     const kids = [el.Svg({ source: svg, alt: describe(r), width: w, height })]
     if (steps.length) {
       // the card is one image exactly as wide as the row, placed at the row's left edge: its
       // middle is the row's middle, which is the band's middle, whatever the row says
-      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })), w)
+      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })), base)
       kids.push(el.Box({ position: 'absolute', bottom: 1, left: 0, display: 'none', hover: { display: 'flex' }, children: [el.Svg({ source: card.svg, alt: steps.map((t) => t.title).join(', '), width: card.width, height: card.height })] }))
     }
     return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', children: kids })] })
@@ -629,7 +656,7 @@ function drawPane(el, width, surface) {
       rows.push(Text(G.check.met === false ? { color: 'yellow', children: [`Last goal check: not met yet: ${mask(G.check.reason)}`] } : { dimColor: true, children: [`Last goal check: ${mask(G.check.reason)}`] }))
     }
   } else {
-    rows.push(Text({ dimColor: true, children: ['No goal in this chat. Type /goal <what done looks like> to start one.'] }))
+    rows.push(Text({ dimColor: true, children: ['这个对话还没有任务计划。Claude 接到多步任务时会自己列出来。'] }))
   }
   const rest = others.filter((g) => g.sessionId !== sessionId)
   rows.push(Text({ children: [' '] }))
@@ -642,7 +669,7 @@ function drawPane(el, width, surface) {
 }
 
 function plainText() {
-  if (!G) return 'No goal in this chat.'
+  if (!G) return '这个对话还没有任务计划。'
   const p = progress(G)
   const lines = [`${label(G)}: ${mask(G.title)}`, `${headline(G, p)}  ${bar(p.fraction, 30)}`, statsLine(G, p)]
   for (const t of G.tasks.filter((x) => !x.replaced)) lines.push(`${ICON[t.status] || '○'} ${mask(t.title)}  ${mask(taskTail(t))}`)

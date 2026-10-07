@@ -7,9 +7,27 @@
 
 import { minutes, clip } from './fmt.mjs'
 
-// usage-band's hues are cyan, amber, indigo and green; the goal takes rose, green when done
-export const HUE = { goal: '#e58fb6', done: '#72cf9f' }
+// usage-band's hues are cyan, amber, indigo and green; the goal takes a rainbow, green when done.
+// HUE.goal stays for the terminal's lone accents; the desktop draws the gradient below.
+export const HUE = { goal: '#b197fc', done: '#72cf9f' }
 const TRACK = '#4a4f5c'
+// Light-mode stops, then dark-mode ones; the first repeats last so a flowing bar loops seamlessly
+export const RAINBOW = ['#e03131', '#f76707', '#f59f00', '#2f9e44', '#1c7ed6', '#7048e8', '#c2255c', '#e03131']
+const RAINBOW_DARK = ['#ff6b6b', '#ffa94d', '#ffd43b', '#69db7c', '#4dabf7', '#9775fa', '#f783ac', '#ff6b6b']
+// The desktop images draw at this many CSS px per unit: 13px type comes out about 15px, near the
+// app's own body text (Neo, 2026-10-06: "这个字有点小")
+export const SCALE = 1.18
+const scaled = (v) => Math.ceil(v * SCALE)
+
+// A rainbow running from x1 to x2 in the image's own units; `flow` slides it along forever
+const rainbow = (id, x1, x2, flow = false) =>
+  `<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${x1}" x2="${x2}" y1="0" y2="0" spreadMethod="repeat">` +
+  RAINBOW.map((_, i) => `<stop offset="${(i / (RAINBOW.length - 1)).toFixed(3)}" class="r${i}"/>`).join('') +
+  (flow ? `<animateTransform attributeName="gradientTransform" type="translate" from="0 0" to="${x2 - x1} 0" dur="6s" repeatCount="indefinite"/>` : '') +
+  `</linearGradient>`
+const RAINBOW_CSS =
+  RAINBOW.map((c, i) => `.r${i}{stop-color:${c}}`).join('') +
+  `@media (prefers-color-scheme:dark){${RAINBOW_DARK.map((c, i) => `.r${i}{stop-color:${c}}`).join('')}}`
 
 // Blend a #rrggbb color toward white (t > 0) or black (t < 0) by |t|
 export const lighten = (hex, t) => {
@@ -24,28 +42,29 @@ const esc = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
 // ---- what the row says, the same on every surface
 
 /**
- * The row's parts for a goal (null when the chat has none, or its goal ended a while ago).
- * state: 'idle' | 'planning' | 'running' | 'done' | 'stopped'
+ * The row's parts. With no plan running it reads 'working' while Claude is on a turn (`work`,
+ * the turn's tool calls so far) and 'idle' otherwise: no /goal hint, the plan is Claude's to make.
+ * state: 'idle' | 'working' | 'planning' | 'running' | 'done' | 'stopped'
  */
-export function rowOf(g, p, etaMs, isRecent) {
-  if (!g || !(g.status === 'running' || isRecent)) {
-    return { state: 'idle', title: 'No goal', detail: '/goal <what done looks like>' }
-  }
+export function rowOf(g, p, etaMs, isRecent, work = null) {
+  const running = g && g.status === 'running'
+  if (!running && work) return { state: 'working', title: '工作中', detail: work.calls ? `${work.calls} 个操作` : '' }
+  if (!g || !(running || isRecent)) return { state: 'idle', title: '空闲' }
   const title = clip(g.title, 40)
-  if (g.status === 'met') return { state: 'done', title, figure: 'done ✓', detail: minutes((g.endedAt || 0) - g.startedAt) }
-  if (g.status !== 'running') return { state: 'stopped', title, figure: 'stopped' }
-  if (!g.planned && !g.planAt) return { state: 'planning', title, detail: 'planning…' }
+  if (g.status === 'met') return { state: 'done', title, figure: '完成 ✓', detail: minutes((g.endedAt || 0) - g.startedAt) }
+  if (g.status !== 'running') return { state: 'stopped', title, figure: '已停止' }
+  if (!g.planned && !g.planAt) return { state: 'planning', title, detail: '列步骤中…' }
   return {
     state: 'running',
     title,
     fraction: p.fraction,
     figure: `${p.doneN}/${p.n} · ${p.pct}%`,
-    detail: etaMs ? `~${minutes(etaMs)} left` : p.doneN < 2 ? 'ETA after 2 tasks' : '',
+    detail: etaMs ? `剩约 ${minutes(etaMs)}` : p.doneN < 2 ? '做完 2 步后估时' : '',
   }
 }
 
 export function describe(r) {
-  return [r.state === 'idle' ? 'No goal' : `Goal: ${r.title}`, r.figure, r.detail].filter(Boolean).join(', ')
+  return [r.state === 'idle' || r.state === 'working' ? r.title : `任务：${r.title}`, r.figure, r.detail].filter(Boolean).join('，')
 }
 
 // ---- desktop: one SVG in usage-band's style
@@ -73,6 +92,9 @@ const pinW = (v) => `textLength="${textW(v).toFixed(1)}" lengthAdjust="spacing"`
 const ink = (hue, x, v) =>
   `<text x="${x}" y="19.5" font-size="${D.size}" ${pinW(v)} class="ink" style="--l:${lighten(hue, -0.38)};--d:${lighten(hue, 0.25)}">${esc(v)}</text>`
 const mute = (x, v) => `<text x="${x}" y="19.5" font-size="${D.size}" ${pinW(v)} class="mute">${esc(v)}</text>`
+const paint = (id, x, v, size = D.size, y = 19.5) =>
+  `<text x="${x}" y="${y}" font-size="${size}" ${pinW(v)} fill="url(#${id})" font-weight="600">${esc(v)}</text>`
+const fig = (x, v) => `<text x="${x}" y="19.5" font-size="${D.size}" ${pinW(v)} class="fig">${esc(v)}</text>`
 const rule = (x) => `<rect x="${x}" y="${CAP.top}" width="1" height="${CAP.h}" class="rule"/>`
 
 // A target, as usage-band draws its cache icon
@@ -85,48 +107,59 @@ const HEAD =
   `:root{color-scheme:light dark;background:transparent}` +
   `text{font-family:Inter,"SF Pro Text",system-ui,-apple-system,"Segoe UI",sans-serif;font-weight:500;font-feature-settings:"tnum","cv05"}` +
   `.track{fill:var(--h);fill-opacity:.22}` +
-  `.ink{fill:var(--l)}.mute{fill:#8b8f97;font-weight:400}.rule{fill:#000;fill-opacity:.1}` +
-  `@media (prefers-color-scheme:dark){.ink{fill:var(--d)}.mute{fill:#9aa0a8}.rule{fill:#fff;fill-opacity:.13}}` +
+  `.ink{fill:var(--l)}.mute{fill:#8b8f97;font-weight:400}.rule{fill:#000;fill-opacity:.1}.fig{fill:#2b2f36}` +
+  `@media (prefers-color-scheme:dark){.ink{fill:var(--d)}.mute{fill:#9aa0a8}.rule{fill:#fff;fill-opacity:.13}.fig{fill:#eef0f3}}` +
+  RAINBOW_CSS +
   `</style>` +
   `<defs><linearGradient id="shine" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/>` +
   `<stop offset=".5" stop-color="#fff" stop-opacity=".8"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>`
 
 export function rowSvg(r) {
-  const hue = r.state === 'done' ? HUE.done : HUE.goal
-  const parts = [`<g transform="translate(1 ${CAP.top})">${icon(r.state === 'idle' ? '#8b8f97' : lighten(hue, -0.15))}</g>`]
+  const done = r.state === 'done'
+  const lit = r.state !== 'idle'
+  const defs = []
+  const parts = []
+  if (lit && !done) defs.push(rainbow('rb-icon', 1, 11))
+  parts.push(`<g transform="translate(1 ${CAP.top})">${icon(!lit ? '#8b8f97' : done ? lighten(HUE.done, -0.15) : 'url(#rb-icon)')}</g>`)
   let x = 1 + D.icon + 6
   const put = (draw, v, gap = D.inner) => {
     parts.push(draw(x, v))
     x += textW(v) + gap
   }
-  if (r.state === 'idle') put(mute, r.title)
-  else put((px, v) => ink(hue, px, v), r.title)
+  if (!lit) put(mute, r.title)
+  else if (done) put((px, v) => ink(HUE.done, px, v), r.title)
+  else {
+    defs.push(rainbow('rb-title', x, x + textW(r.title)))
+    put((px, v) => paint('rb-title', px, v), r.title)
+  }
   if (r.state === 'running') {
     const y = (D.h - D.barH) / 2
     const rad = D.barH / 2
     const fillW = Math.max(r.fraction > 0 ? D.barH : 0, Math.min(D.barW, D.barW * r.fraction))
+    defs.push(rainbow('rb-bar', x, x + D.barW, true), `<clipPath id="c-goal"><rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}"/></clipPath>`)
     parts.push(
-      `<defs><clipPath id="c-goal"><rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}"/></clipPath></defs>`,
-      `<rect x="${x}" y="${y}" width="${D.barW}" height="${D.barH}" rx="${rad}" class="track" style="--h:${hue}"/>`,
-      `<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="${lighten(hue, -0.12)}"/>`,
+      `<rect x="${x}" y="${y}" width="${D.barW}" height="${D.barH}" rx="${rad}" class="track" style="--h:#9775fa"/>`,
+      `<rect x="${x}" y="${y}" width="${fillW}" height="${D.barH}" rx="${rad}" fill="url(#rb-bar)"/>`,
       `<g clip-path="url(#c-goal)"><rect y="${y}" width="18" height="${D.barH}" fill="url(#shine)">` +
         `<animate attributeName="x" values="${x - 18};${x + D.barW};${x + D.barW}" keyTimes="0;0.62;1" dur="2.6s" repeatCount="indefinite"/></rect></g>`,
     )
     x += D.barW + D.inner
   }
-  if (r.figure) put((px, v) => ink(hue, px, v), r.figure)
+  if (r.figure) put(done ? (px, v) => ink(HUE.done, px, v) : fig, r.figure)
   if (r.detail) {
-    if (r.state !== 'idle') {
+    if (lit) {
       parts.push(rule(x))
       x += 1 + D.inner
     }
     put(mute, r.detail)
   }
-  const width = Math.max(1, Math.ceil(x - D.inner + 2))
+  const base = Math.max(1, Math.ceil(x - D.inner + 2))
+  const width = scaled(base)
+  const height = scaled(D.h)
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${D.h}" viewBox="0 0 ${width} ${D.h}" style="color-scheme:light dark;background:transparent">` +
-    HEAD + parts.join('') + `</svg>`
-  return { svg, width, height: D.h }
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${base} ${D.h}" style="color-scheme:light dark;background:transparent">` +
+    HEAD + (defs.length ? `<defs>${defs.join('')}</defs>` : '') + parts.join('') + `</svg>`
+  return { svg, width, height, base }
 }
 
 // ---- terminal: one row of spans in usage-band's style
@@ -140,8 +173,9 @@ export function rowSpans(r, columns = 100) {
     const filled = Math.max(r.fraction > 0 ? 1 : 0, Math.min(cells, Math.round(r.fraction * cells)))
     spans.push({ text: '  ' })
     for (let i = 0; i < filled; i++) {
-      const shade = filled === 1 ? 0 : -0.15 + (0.35 * i) / (filled - 1)
-      spans.push({ text: '■', color: lighten(hue, shade) })
+      // each cell its own colour of the rainbow, by where it sits on the full bar
+      const color = r.state === 'done' ? hue : RAINBOW_DARK[Math.min(RAINBOW_DARK.length - 2, Math.floor((i / cells) * (RAINBOW_DARK.length - 1)))]
+      spans.push({ text: '■', color })
     }
     if (cells > filled) spans.push({ text: '■'.repeat(cells - filled), color: TRACK })
   }
@@ -166,9 +200,10 @@ export const fit = (v, room, size) => {
 
 export function stepsSvg(steps, width) {
   const h = STEP.top * 2 + steps.length * STEP.h - 6
+  const defs = []
   const rows = steps.map((s, i) => {
     const y = STEP.top + i * STEP.h + 13
-    const hue = s.status === 'done' ? HUE.done : s.status === 'active' ? HUE.goal : null
+    const hue = s.status === 'done' ? HUE.done : s.status === 'active' ? '#f783ac' : null
     const mark = MARK[s.status] || '○'
     const tail = s.tail ? s.tail : ''
     const tailW = tail ? textW(tail, STEP.size) + 10 : 0
@@ -176,14 +211,15 @@ export function stepsSvg(steps, width) {
     const markSvg = hue
       ? `<text x="12" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(hue, -0.38)};--d:${lighten(hue, 0.25)}">${mark}</text>`
       : `<text x="12" y="${y}" font-size="${STEP.size}" class="mute">${mark}</text>`
+    if (s.status === 'active') defs.push(rainbow(`rb-step${i}`, 30, 30 + textW(title, STEP.size)))
     const titleSvg = s.status === 'active'
-      ? `<text x="30" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(HUE.goal, -0.38)};--d:${lighten(HUE.goal, 0.25)}">${esc(title)}</text>`
+      ? `<text x="30" y="${y}" font-size="${STEP.size}" font-weight="600" fill="url(#rb-step${i})">${esc(title)}</text>`
       : `<text x="30" y="${y}" font-size="${STEP.size}" class="mute">${esc(title)}</text>`
     const tailSvg = tail ? `<text x="${width - 12}" y="${y}" font-size="${STEP.size}" text-anchor="end" class="mute">${esc(tail)}</text>` : ''
     return markSvg + titleSvg + tailSvg
   })
   const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" style="color-scheme:light dark;background:transparent">` +
-    HEAD + rows.join('') + `</svg>`
-  return { svg, width, height: h }
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${scaled(width)}" height="${scaled(h)}" viewBox="0 0 ${width} ${h}" style="color-scheme:light dark;background:transparent">` +
+    HEAD + (defs.length ? `<defs>${defs.join('')}</defs>` : '') + rows.join('') + `</svg>`
+  return { svg, width: scaled(width), height: scaled(h) }
 }
