@@ -440,7 +440,7 @@ export function register(on) {
     if (e.requestId !== PANE) return next(e)
     const el = $.ui.resolve(e)
     const width = Math.max(50, (e.props && e.props.bodyColumns) || 100)
-    return drawPane(el, width)
+    return drawPane(el, width, e.surface)
   })
 }
 
@@ -517,14 +517,6 @@ function taskRow(el, t, width) {
   return Box({ flexDirection: 'row', children: kids })
 }
 
-function barRow(el, g, p, width) {
-  const { Box, Text } = el
-  const w = Math.max(10, Math.min(width - 2, 120))
-  const n = Math.round(p.fraction * w)
-  const color = g.status === 'met' ? 'green' : 'cyan'
-  return Box({ flexDirection: 'row', children: [Text({ color, children: ['█'.repeat(n)] }), Text({ dimColor: true, children: ['░'.repeat(w - n)] })] })
-}
-
 // ---------- drawing ----------
 
 function drawRow(el, e) {
@@ -571,14 +563,13 @@ function otherRow(el, g, width) {
   })
 }
 
-function drawPane(el, width) {
+function drawPane(el, width, surface) {
   const { Box, Text } = el
   const rows = []
   if (G) {
     const p = progress(G)
-    rows.push(Text({ bold: true, wrap: 'truncate-end', children: [`◎ ${label(G)}: ${mask(G.title)}`] }))
-    rows.push(Text({ color: G.status === 'met' ? 'green' : 'cyan', children: [headline(G, p)] }))
-    if (G.planAt) rows.push(barRow(el, G, p, width))
+    // the same row as above the prompt, in usage-band's style
+    rows.push(drawRow(el, { surface, props: { bodyColumns: width } }))
     const stats = statsLine(G, p)
     if (stats) rows.push(Text({ dimColor: true, children: [stats] }))
     rows.push(Text({ children: [' '] }))
