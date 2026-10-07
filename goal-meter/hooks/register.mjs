@@ -17,7 +17,7 @@
 import { minutes, duration, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
 import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
-import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf, currentStep } from './plan.mjs'
+import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
 const PANE = 'goal-meter'
@@ -45,6 +45,8 @@ let turnCalls = 0 // its tool calls so far, the mod's own left out
 let turnNudged = false
 let ops = [] // this turn's tool calls, newest last: the hover card's details while there is no plan
 const OPS_KEEP = 8
+let turnAt = 0 // when the running main turn started
+let lastTurn = null // the latest finished turn that did work: { calls, ms, at }
 let pendingGoal = null
 let paneOpen = false
 let others = []
@@ -320,6 +322,7 @@ export function register(on) {
     working = true
     turnCalls = 0
     ops = []
+    turnAt = now
     turnNudged = false
     $.ui.invalidate('ui.render')
     if (pendingGoal && (!G || G.startedAt < pendingGoal.at)) {
@@ -424,6 +427,7 @@ export function register(on) {
     now = await $.clock.now()
     if (!e.agentId) {
       working = false
+      if (turnCalls > 0) lastTurn = { calls: turnCalls, ms: now - (turnAt || now), at: now }
       $.ui.invalidate('ui.render')
     }
     if (e.agentId) {
@@ -484,6 +488,7 @@ export function register(on) {
     now = await $.clock.now() // the row's clock (ETA, the finish sweep) reads the time it is drawn at
     const el = $.ui.resolve(e)
     const mine = drawRow(el, e)
+    if (!mine) return below
     if (!below) return mine
     return el.Box({ flexDirection: 'column', children: [mine, below] })
   })
@@ -614,13 +619,14 @@ function drawRow(el, e) {
   const t = G && G.status === 'running' ? eta(G, now) : null
   const work = working && !(G && G.status === 'running') ? { calls: turnCalls } : null
   const celebrate = !!G && G.status === 'met' && now - (G.endedAt || 0) < CELEBRATE_MS
-  const r = rowOf(G ? { ...G, title: mask(G.title), step: mask(currentStep(G)), celebrate } : null, p, t ? t.ms : 0, isRecent(G), work)
+  const r = rowOf(G ? { ...G, title: mask(G.title), celebrate } : null, p, t ? t.ms : 0, work, lastTurn)
+  if (!r) return null // a chat that has done nothing yet: no row at all
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
   const planned = G && (r.state === 'running' || r.state === 'planning' || r.state === 'done' || r.state === 'stopped') ? visibleTasks(G) : []
   // no plan to show: the card lists this turn's latest operations instead, so hovering always
   // shows what Claude is doing (Neo, 2026-10-06: a chat with no plan hovered to nothing)
-  const steps = planned.length ? planned : (r.state === 'working' || r.state === 'idle') ? ops.map(opStep) : []
+  const steps = planned.length ? planned : (r.state === 'working' || r.state === 'last') ? ops.map(opStep) : []
   const list = steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6)))
   // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
   // right above it, as if the row grew upward: absolutely placed, so nothing moves (the surface
@@ -698,7 +704,8 @@ function drawPane(el, width, surface) {
   if (G) {
     const p = progress(G)
     // the same row as above the prompt, in usage-band's style
-    rows.push(drawRow(el, { surface, props: { bodyColumns: width } }))
+    const row = drawRow(el, { surface, props: { bodyColumns: width } })
+    if (row) rows.push(row)
     const stats = statsLine(G, p)
     if (stats) rows.push(Text({ dimColor: true, children: [stats] }))
     rows.push(Text({ children: [' '] }))

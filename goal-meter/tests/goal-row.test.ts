@@ -17,41 +17,45 @@ const goal = (over = {}) => ({
 })
 const prog = { fraction: 0.5, doneN: 2, n: 4, pct: 50 }
 
-test('with no plan the row is still there, idle, and never hints at /goal', async ($, on) => {
-  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+test('a chat that has done nothing has no row at all, and never a /goal hint or 空闲', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ children: ['band'] }))
   mock.clock(on)
-  const term = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
-  expect(await term.find({ type: 'Text', text: '空闲' })).toBeDefined()
-  expect(JSON.stringify(await term.find({ type: 'Box' }))).not.toContain('/goal')
-  await term.unmount()
-  const desk = await $.ui.mount({ plugin: 'goal-meter', surface: 'desktop', ...BAND })
-  const svg = await desk.find({ type: 'Svg' })
-  expect(svg?.props.alt).toBe('空闲')
-  expect(String(svg?.props.source)).not.toContain('/goal')
-  await desk.unmount()
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
+    const all = JSON.stringify(await ui.find({ type: 'Text', text: 'band' })) + JSON.stringify(await ui.findAll({ type: 'Svg' }))
+    expect(await ui.find({ type: 'Text', text: 'band' })).toBeDefined()
+    expect(await ui.findAll({ type: 'Svg' })).toHaveLength(0)
+    expect(all).not.toContain('空闲')
+    expect(all).not.toContain('/goal')
+    await ui.unmount()
+  }
 })
 
-test('a task with no plan yet reads "working" while the turn runs, idle again after', async ($, on) => {
+test('a task with no plan reads "working" while the turn runs, then the last turn, never 空闲', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
   on('tool.call', () => ({ result: 'engine' }))
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('turn.complete', () => ({ text: '' }))
-  mock.clock(on)
+  const clock = mock.clock(on)
   const row = async () => {
     const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
     const text = JSON.stringify(await ui.find({ type: 'Box', key: 'goal-row' }) ?? await ui.find({ type: 'Box' }))
     await ui.unmount()
     return text
   }
+  await clock.advance(60000)
   await $.turn.start({ text: '修一下这个 bug', turnId: 't1' })
   expect(await row()).toContain('工作中')
   await $.tool.call({ tool: 'Read', file_path: '/a' } as never)
   await $.tool.call({ tool: 'Bash', command: 'ls' } as never)
   expect(await row()).toContain('2 个操作')
+  await clock.advance(3 * 60000)
   await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
   const after = await row()
-  expect(after).toContain('空闲')
+  expect(after).toContain('上一轮')
+  expect(after).toContain('2 个操作 · 用时 3m')
   expect(after).not.toContain('工作中')
+  expect(after).not.toContain('空闲')
 })
 
 test('a turn a few tools deep with no plan gets one hidden reminder to plan, once', async ($, on) => {
@@ -88,47 +92,58 @@ test('no reminder once a plan is running', async ($, on) => {
 
 test('the row stacks on top of what another mod drew, never replacing it', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Text({ children: ['5h 5%'] }))
+  on('tool.call', () => ({ result: 'engine' }))
   mock.clock(on)
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'plan', goal: '叠放', tasks: [{ title: '一', size: 'S' }] } as never)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
     expect(await ui.find({ type: 'Text', text: '5h 5%' })).toBeDefined()
     // and the goal row is really there too, above it
-    expect(await ui.find({ type: 'Box', key: 'goal-row' }) ?? await ui.find({ type: 'Text', text: '空闲' })).toBeDefined()
+    const top = (await ui.find({ type: 'Box' })) as { children: unknown[] }
+    expect(JSON.stringify(top.children[0])).toContain('叠放')
+    expect(JSON.stringify(top.children[1])).toContain('5h 5%')
     await ui.unmount()
   }
 })
 
-test('a running goal is one row: title, bar, done of total, ETA', async () => {
-  const r = rowOf(goal(), prog, 8 * 60000, false)
-  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', step: '', fraction: 0.5, figure: '2/4 · 50%', detail: '剩约 8m' })
-  const { svg, height } = rowSvg(r)
-  // drawn larger than usage-band's 30px row: the type comes out about 15px
-  expect(height).toBe(Math.ceil(30 * SCALE))
-  expect(svg).toContain('viewBox="0 0 ')
+test('a running plan is one row: the whole title, a band-length bar, done of total, ETA; no rainbow', async () => {
+  const r = rowOf(goal(), prog, 8 * 60000)
+  expect(r).toEqual({ state: 'running', title: '测试全绿并提交', fraction: 0.5, figure: '2/4 · 50%', detail: '剩约 8m' })
+  const { svg, height } = rowSvg(r!)
+  expect(height).toBe(30)
   expect(svg).toContain('<animate')
-  // a rainbow, flowing along the bar, on the title and the bar fill; no rose left
-  expect(svg).toContain('fill="url(#rb-title)"')
-  expect(svg).toContain('fill="url(#rb-bar)"')
-  expect(svg).toContain('animateTransform')
-  expect(svg).not.toContain('e58fb6')
   expect(svg).toContain('测试全绿并提交')
   expect(svg).toContain('2/4 · 50%')
-  const spans = rowSpans(r, 120)
+  // plain colours: no gradients but the shine, no rose, no rainbow
+  expect(svg).not.toContain('url(#rb-')
+  expect(svg).not.toContain('animateTransform')
+  expect(svg).not.toContain('e58fb6')
+  expect(svg).toContain('class="bar"')
+  // the bar is usage-band's length
+  expect(svg).toContain('width="76"')
+  const spans = rowSpans(r!, 120)
   expect(spans.map(s => s.text).join('')).toBe('◎ 测试全绿并提交  ■■■■■■■■■■  2/4 · 50% · 剩约 8m')
+  // a long title is kept far longer than before (16 with a step name beside it)
+  expect(rowOf(goal({ title: '接 V35：核 10-05 数据丢失并找 memvault end 删文件的路径' }), prog, 0)!.title).toBe('接 V35：核 10-05 数据丢失并找 memvault end 删文件的路径')
 })
 
 test('task sizes (S, M, L) never reach the row', async () => {
-  const r = rowOf(goal(), prog, 0, false)
+  const r = rowOf(goal(), prog, 0)!
   const text = rowSpans(r).map(s => s.text).join('') + rowSvg(r).svg
   expect(/\b[SML]\b/.test(text.replace(/<[^>]+>/g, ' ').replace(/viewBox|xmlns/g, ''))).toBe(false)
 })
 
-test('planning, done and an old finished goal read as they should', async () => {
-  expect(rowOf(goal({ planAt: 0 }), prog, 0, false).detail).toBe('列步骤中…')
-  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: '完成 ✓', detail: '用时 12m' })
+test('planning, done, an old finished plan, and the last turn read as they should', async () => {
+  expect(rowOf(goal({ planAt: 0 }), prog, 0)!.detail).toBe('列步骤中…')
+  expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0)).toMatchObject({ state: 'done', figure: '完成 ✓', detail: '用时 12m' })
+  // however long ago it finished, the plan stays on the row
+  expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0)!.state).toBe('done')
   // a new task after one finished reads working, not the old plan's done
-  expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, true, { calls: 1 }).state).toBe('working')
-  expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, false).state).toBe('idle')
+  expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, { calls: 1 })!.state).toBe('working')
+  // work after the plan ended: the last turn; work before it: the plan
+  expect(rowOf(goal({ status: 'met', endedAt: 100 }), prog, 0, null, { calls: 4, ms: 90000, at: 200 })).toMatchObject({ state: 'last', detail: '4 个操作 · 用时 2m' })
+  expect(rowOf(goal({ status: 'met', endedAt: 300 }), prog, 0, null, { calls: 4, ms: 90000, at: 200 })!.state).toBe('done')
+  expect(rowOf(null, null, 0)).toBeNull()
 })
 
 test('collapsed to one row; the steps float in a hover card that moves nothing, sizes left out', async ($, on) => {
@@ -208,42 +223,32 @@ test('a plan without /goal shows under the name Claude gave; a new name starts a
   await ui.unmount()
 })
 
-test('the row names the step under way, else the next one, so nobody has to hover', async ($, on) => {
+test('the row leaves the step name out (room for the title); the card names it', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
   on('tool.call', () => ({ result: 'engine' }))
   mock.clock(on)
   const tasks = (action: string, extra = {}) => $.tool.call({ tool: 'mcp__goal-meter__tasks', action, ...extra } as never)
   await tasks('plan', { goal: '美化进度行', tasks: [{ title: '显示当前步骤', size: 'M' }, { title: '完成动画', size: 'M' }] })
-  const row = async (surface: 'terminal' | 'desktop') => {
-    const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
-    const imgs = surface === 'desktop' ? await ui.findAll({ type: 'Svg' }) : []
-    const text = surface === 'desktop' ? String(imgs[0]!.props.source) + imgs[0]!.props.alt : JSON.stringify(await ui.find({ type: 'Box', key: 'goal-row' }))
-    await ui.unmount()
-    return text
-  }
-  // nothing started yet: the next step up
-  expect(await row('terminal')).toContain('显示当前步骤')
   await tasks('start', { id: 1 })
-  expect(await row('terminal')).toContain('▶ ')
-  expect(await row('desktop')).toContain('正在：显示当前步骤')
-  await tasks('done', { id: 1 })
-  const after = await row('desktop')
-  expect(after).toContain('完成动画')
-  expect(after).not.toContain('正在：显示当前步骤')
+  const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'desktop', ...BAND })
+  const imgs = await ui.findAll({ type: 'Svg' })
+  await ui.unmount()
+  expect(String(imgs[0]!.props.source)).toContain('美化进度行')
+  expect(String(imgs[0]!.props.source)).not.toContain('显示当前步骤')
+  expect(String(imgs[1]!.props.source)).toContain('显示当前步骤')
 })
 
-test('a plan just finished sweeps a rainbow over a full bar, then settles green', async () => {
-  const done = (celebrate: boolean) => rowSvg(rowOf(goal({ status: 'met', endedAt: 5 * 60000, celebrate }), prog, 0, true)).svg
+test('a plan just finished: a full green bar a shine runs over twice; later, the bar alone', async () => {
+  const done = (celebrate: boolean) => rowSvg(rowOf(goal({ status: 'met', endedAt: 5 * 60000, celebrate }), prog, 0)!).svg
   const party = done(true)
-  expect(party).toContain('fill="url(#rb-bar)"')
-  expect(party).toContain('attributeName="opacity" values="1;1;0"')
-  expect(party).toContain('fill="freeze"')
+  expect(party).toContain('url(#shine)')
+  expect(party).toContain('repeatCount="2"')
+  expect(party).not.toContain('rb-bar')
   const calm = done(false)
-  expect(calm).not.toContain('rb-bar')
   expect(calm).not.toContain('<animate')
   // the full bar is drawn in both
   expect(calm).toContain('class="track"')
-  expect(rowOf(goal({ status: 'met', endedAt: 5 * 60000 }), prog, 0, true).detail).toBe('用时 5m')
+  expect(rowOf(goal({ status: 'met', endedAt: 5 * 60000 }), prog, 0)!.detail).toBe('用时 5m')
 })
 
 test('a finished plan celebrates only in the first seconds after it ends', async ($, on) => {
@@ -263,14 +268,14 @@ test('a finished plan celebrates only in the first seconds after it ends', async
   await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'plan', goal: '小活', tasks: [{ title: '一步', size: 'S' }] } as never)
   await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'done', id: 1 } as never)
   await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
-  expect(await svg()).toContain('rb-bar')
+  expect(await svg()).toContain('repeatCount="2"')
   await clock.advance(20000)
-  expect(await svg()).not.toContain('rb-bar')
+  expect(await svg()).not.toContain('repeatCount="2"')
 })
 
 test('the row is drawn at usage-band\'s size; the card at its own larger type, never past the frame', async () => {
   expect(SCALE).toBe(1)
-  expect(rowSvg(rowOf(goal(), prog, 0, false)).height).toBe(30)
+  expect(rowSvg(rowOf(goal(), prog, 0)!).height).toBe(30)
   const long = '这是一个非常非常长的步骤名字，长到一行放不下还要再长一点'
   const card = stepsSvg([{ status: 'active', title: long, tail: '进行中 2m' }, { status: 'pending', title: '短', tail: '' }])
   expect(card.width).toBe(CARD.max)
