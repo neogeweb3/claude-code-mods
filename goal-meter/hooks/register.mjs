@@ -523,13 +523,45 @@ function drawRow(el, e) {
   const p = G ? progress(G) : null
   const t = G && G.status === 'running' ? eta(G, now) : null
   const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G))
-  if (e.surface === 'desktop' || e.surface === 'mobile') {
+  const desk = e.surface === 'desktop' || e.surface === 'mobile'
+  let row
+  if (desk) {
     const { svg, width, height } = rowSvg(r)
-    return el.Box({ flexDirection: 'row', justifyContent: 'center', flexGrow: 1, paddingX: 1, children: [el.Svg({ source: svg, alt: describe(r), width, height })] })
+    row = el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Svg({ source: svg, alt: describe(r), width, height })] })
+  } else {
+    const spans = rowSpans(r, Math.max(40, (e.props && e.props.bodyColumns) || 100))
+    row = el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })
   }
-  const columns = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  const spans = rowSpans(r, columns)
-  return el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })
+  const steps = G && (G.status === 'running' || isRecent(G)) ? visibleTasks(G) : []
+  if (!steps.length) return row
+  // Collapsed to the one row; the steps unfold while the pointer rests on it (the surface does
+  // it, no hook runs) and fold away when the pointer leaves
+  const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
+  const list = el.Box({
+    display: 'none',
+    hover: { display: 'flex' },
+    flexDirection: 'column',
+    alignItems: desk ? 'center' : 'flex-start',
+    paddingX: 2,
+    children: steps.slice(0, 20).map((s) => stepRow(el, s, width)),
+  })
+  return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, list] })
+}
+
+const STEP_HUE = { done: '#72cf9f', active: '#e58fb6' }
+
+function stepRow(el, t, width) {
+  const { Box, Text } = el
+  const tail = mask(taskTail(t))
+  const lead = t.status === 'done'
+    ? Text({ color: STEP_HUE.done, children: ['✓ '] })
+    : t.status === 'active'
+      ? Text({ color: STEP_HUE.active, children: ['▶ '] })
+      : Text({ dimColor: true, children: ['○ '] })
+  const title = Text({ color: t.status === 'active' ? STEP_HUE.active : undefined, dimColor: t.status !== 'active', wrap: 'truncate-end', children: [mask(t.title)] })
+  const kids = [lead, title]
+  if (tail) kids.push(Text({ dimColor: true, children: ['  ' + clip(tail, Math.max(10, Math.floor(width / 3)))] }))
+  return Box({ flexDirection: 'row', children: kids })
 }
 
 async function openPane($) {

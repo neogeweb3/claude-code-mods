@@ -1,5 +1,12 @@
 # Claude Code mods
 
+> [!NOTE]
+> **About this fork.** A fork of [nateherkai/claude-code-mods](https://github.com/nateherkai/claude-code-mods). Only **Goal Meter** changes:
+> it is always on (an idle row when the chat has no goal), takes a single row above [usage-band](https://github.com/neogeweb3/CC-Usage-Band)
+> drawn in the same style (rounded bar with a moving shine on the desktop, ■ bar in the terminal), and unfolds every step only while the
+> pointer rests on it. Task sizes stay internal. Install from this fork with
+> `claude plugin marketplace add neogeweb3/claude-code-mods` and `claude plugin install goal-meter@neo-claude-mods`.
+
 Four mods for Claude Code by Nate Herk. Mods are plugins that run inside Claude Code: they can draw on screen (a line above the prompt, a footer label, a side pane), add slash commands, and step in before Claude runs a tool. These four save money on big chats, keep private things off screen while you record, show how far along a `/goal` is, and stop two chats from editing the same file.
 
 | Mod | Commands | What it does |

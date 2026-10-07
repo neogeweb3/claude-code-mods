@@ -1,4 +1,4 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import { rowOf, rowSpans, rowSvg } from '../hooks/row.mjs'
 
@@ -59,4 +59,28 @@ test('planning, done and an old finished goal read as they should', async () => 
   expect(rowOf(goal({ planAt: 0 }), prog, 0, false).detail).toBe('planning…')
   expect(rowOf(goal({ status: 'met', endedAt: 12 * 60000 }), prog, 0, true)).toMatchObject({ state: 'done', figure: 'done ✓', detail: '12m' })
   expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, false).state).toBe('idle')
+})
+
+test('collapsed to one row; the steps sit in a hover reveal under it, sizes left out', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  mock.clock(on)
+  await $.tool.call({
+    tool: 'mcp__goal-meter__tasks',
+    action: 'plan',
+    tasks: [{ title: '读代码', size: 'S' }, { title: '改样式', size: 'L' }],
+  })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
+    expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
+    const scope = await ui.find({ type: 'Box', key: 'goal-row' })
+    expect(scope).toBeDefined()
+    const hidden = JSON.stringify(scope)
+    expect(hidden).toContain('"display":"none"')
+    expect(hidden).toContain('"hover":{"display":"flex"}')
+    expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '改样式' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^S\b|^L\b/ })).toBeUndefined()
+    await ui.unmount()
+  }
 })

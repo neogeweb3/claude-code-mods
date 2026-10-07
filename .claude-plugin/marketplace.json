@@ -1,8 +1,8 @@
 {
-  "name": "nateherk-mods",
-  "description": "Claude Code mods by Nate Herk: cache savings, recording mode, a /goal progress bar, and a guard for parallel chats",
+  "name": "neo-claude-mods",
+  "description": "Nate Herk's Claude Code mods; this fork reworks goal-meter into an always-on row in usage-band's style",
   "owner": {
-    "name": "Nate Herk"
+    "name": "Neo Ge"
   },
   "plugins": [
     {
@@ -18,7 +18,8 @@
     {
       "name": "goal-meter",
       "source": "./goal-meter",
-      "description": "A progress bar for /goal built from Claude's own task plan: tasks done out of the plan, elapsed time, an ETA at the goal's own pace, and every chat's goal in /goals"
+      "description": "Always-on goal row above the prompt in usage-band style; hover it to see every step. /goals for the full pane.",
+      "version": "1.1.0-neo.1"
     },
     {
       "name": "collision-guard",

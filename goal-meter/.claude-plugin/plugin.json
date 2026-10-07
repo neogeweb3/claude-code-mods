@@ -1,7 +1,7 @@
 {
   "name": "goal-meter",
-  "version": "1.0.0",
-  "description": "A progress bar for /goal built from Claude's own task plan: tasks done out of the plan, elapsed time, an ETA at the goal's own pace, and every chat's goal in /goals",
+  "version": "1.1.0-neo.1",
+  "description": "Always-on goal row above the prompt, drawn like usage-band: title, progress bar, done of total and ETA; hover it to see every step. /goals opens the full pane.",
   "author": {
     "name": "Nate Herk"
   },
