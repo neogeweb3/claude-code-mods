@@ -14,6 +14,7 @@
 
 import { minutes, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
+import { rowOf, rowSvg, rowSpans, describe } from './row.mjs'
 import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
@@ -416,14 +417,15 @@ export function register(on) {
     return next(e)
   })
 
+  // One row above the prompt, always there (idle when the chat has no goal), stacked on top of
+  // whatever the hooks beneath drew (usage-band's row) and never in place of it
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const below = await next(e)
-    if (e.props && e.props.hasSurvey) return below
-    if (!G || hidden || !(G.status === 'running' || isRecent(G))) return below
+    if ((e.props && e.props.hasSurvey) || hidden) return below
     const el = $.ui.resolve(e)
-    const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-    const mine = drawBand($, el, width)
-    return el.Box({ flexDirection: 'column', children: below ? [mine, below] : [mine] })
+    const mine = drawRow(el, e)
+    if (!below) return mine
+    return el.Box({ flexDirection: 'column', children: [mine, below] })
   })
 
   // The footer shows even when the band is hidden or collapsed
@@ -508,8 +510,8 @@ function taskRow(el, t, width) {
       ? Text({ color: 'cyan', bold: true, children: [`${icon} `] })
       : Text({ dimColor: true, children: [`${icon} `] })
   const body = t.status === 'active'
-    ? Text({ bold: true, wrap: 'truncate-end', children: [`${t.size}  ${title}`] })
-    : Text({ dimColor: t.status !== 'pending', wrap: 'truncate-end', children: [`${t.size}  ${title}`] })
+    ? Text({ bold: true, wrap: 'truncate-end', children: [title] })
+    : Text({ dimColor: t.status !== 'pending', wrap: 'truncate-end', children: [title] })
   const kids = [lead, body]
   if (tail) kids.push(Text({ dimColor: true, children: ['  ' + clip(tail, Math.max(10, Math.floor(width / 3)))] }))
   return Box({ flexDirection: 'row', children: kids })
@@ -525,45 +527,17 @@ function barRow(el, g, p, width) {
 
 // ---------- drawing ----------
 
-function drawBand($, el, width) {
-  const { Box, Text, Button } = el
-  const g = G
-  const p = progress(g)
-  const rows = []
-  const right = headline(g, p)
-  const open = Button({ key: 'goal-tasks', label: 'all tasks', hotkey: 'g', plain: true, onPress: () => openPane($) })
-  rows.push(
-    Box({
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      width: '100%',
-      columnGap: 2,
-      children: [
-        Text({ bold: true, wrap: 'truncate-end', children: [`◎ ${label(g)}: ${mask(g.title)}`] }),
-        Box({ flexDirection: 'row', columnGap: 2, flexShrink: 0, children: [Text({ bold: true, color: g.status === 'met' ? 'green' : 'cyan', children: [right] }), open] }),
-      ],
-    }),
-  )
-  if (g.planAt) rows.push(barRow(el, g, p, width))
-  const stats = statsLine(g, p)
-  if (stats) rows.push(Text({ dimColor: true, wrap: 'truncate-end', children: [stats] }))
-  if (!g.planAt && g.status === 'running') {
-    rows.push(Text({ dimColor: true, wrap: 'truncate-end', children: [nudged ? 'No plan yet: reminded Claude to plan with the goal meter' : 'Waiting for Claude\'s task plan…'] }))
-  } else if (g.status === 'running') {
-    // a window on the list: the last two done, everything running, the next ones
-    const tasks = visibleTasks(g)
-    const done = tasks.filter((t) => t.status === 'done').slice(-2)
-    const active = tasks.filter((t) => t.status === 'active')
-    const todo = tasks.filter((t) => t.status === 'pending').slice(0, active.length ? 2 : 3)
-    const shown = [...done, ...active, ...todo].sort((a, b) => a.id - b.id)
-    for (const t of shown) rows.push(taskRow(el, t, width))
-    const more = tasks.length - shown.length
-    if (more > 0) rows.push(Text({ dimColor: true, children: [`  +${more} more · g: all tasks`] }))
+function drawRow(el, e) {
+  const p = G ? progress(G) : null
+  const t = G && G.status === 'running' ? eta(G, now) : null
+  const r = rowOf(G ? { ...G, title: mask(G.title) } : null, p, t ? t.ms : 0, isRecent(G))
+  if (e.surface === 'desktop' || e.surface === 'mobile') {
+    const { svg, width, height } = rowSvg(r)
+    return el.Box({ flexDirection: 'row', justifyContent: 'center', flexGrow: 1, paddingX: 1, children: [el.Svg({ source: svg, alt: describe(r), width, height })] })
   }
-  if (g.status === 'running' && g.check && g.check.met === false && g.check.reason) {
-    rows.push(Text({ color: 'yellow', wrap: 'truncate-end', children: [`Goal check: not met yet: ${mask(g.check.reason)}`] }))
-  }
-  return Box({ flexDirection: 'column', children: rows })
+  const columns = Math.max(40, (e.props && e.props.bodyColumns) || 100)
+  const spans = rowSpans(r, columns)
+  return el.Box({ flexDirection: 'row', paddingX: 1, children: spans.map((sp, i) => el.Text({ key: 's' + i, color: sp.color, dimColor: sp.dim, wrap: 'truncate-end', children: [sp.text] })) })
 }
 
 async function openPane($) {
@@ -632,6 +606,6 @@ function plainText() {
   if (!G) return 'No goal in this chat.'
   const p = progress(G)
   const lines = [`${label(G)}: ${mask(G.title)}`, `${headline(G, p)}  ${bar(p.fraction, 30)}`, statsLine(G, p)]
-  for (const t of G.tasks.filter((x) => !x.replaced)) lines.push(`${ICON[t.status] || '○'} ${t.size}  ${mask(t.title)}  ${mask(taskTail(t))}`)
+  for (const t of G.tasks.filter((x) => !x.replaced)) lines.push(`${ICON[t.status] || '○'} ${mask(t.title)}  ${mask(taskTail(t))}`)
   return lines.filter(Boolean).join('\n')
 }
