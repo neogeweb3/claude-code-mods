@@ -14,7 +14,7 @@
 
 import { minutes, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
-import { rowOf, rowSvg, rowSpans, describe } from './row.mjs'
+import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
 import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
@@ -533,10 +533,11 @@ function drawRow(el, e) {
   if (desk) {
     const { svg, width: w, height } = rowSvg(r)
     const kids = [el.Svg({ source: svg, alt: describe(r), width: w, height })]
-    if (list.length) {
-      // the card hangs off the row itself, exactly as wide, so it is centred wherever the row
-      // is; the desktop frames a floating box on its own, so the card draws no border
-      kids.push(el.Box({ position: 'absolute', bottom: 1, left: 0, width: '100%', display: 'none', hover: { display: 'flex' }, flexDirection: 'column', paddingX: 1, children: list }))
+    if (steps.length) {
+      // the card is one image exactly as wide as the row, placed at the row's left edge: its
+      // middle is the row's middle, which is the band's middle, whatever the row says
+      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })), w)
+      kids.push(el.Box({ position: 'absolute', bottom: 1, left: 0, display: 'none', hover: { display: 'flex' }, children: [el.Svg({ source: card.svg, alt: steps.map((t) => t.title).join(', '), width: card.width, height: card.height })] }))
     }
     return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', children: kids })] })
   }

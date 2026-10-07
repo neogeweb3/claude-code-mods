@@ -149,3 +149,41 @@ export function rowSpans(r, columns = 100) {
   if (r.detail) spans.push({ text: (r.state === 'idle' ? '  ' : ' · ') + r.detail, dim: true })
   return spans
 }
+
+// ---- desktop: the steps card, one SVG exactly as wide as the row it floats over, so its middle
+// is always the row's middle (the row is centred in the band) and it never shifts sideways
+
+const STEP = { h: 22, top: 8, size: 12.5 }
+const MARK = { done: '✓', active: '▶', pending: '○' }
+
+// Cut text to fit `room` px, by the same measure the row uses
+export const fit = (v, room, size) => {
+  if (textW(v, size) <= room) return v
+  const chars = [...v]
+  while (chars.length && textW(chars.join('') + '…', size) > room) chars.pop()
+  return chars.join('') + '…'
+}
+
+export function stepsSvg(steps, width) {
+  const h = STEP.top * 2 + steps.length * STEP.h - 6
+  const rows = steps.map((s, i) => {
+    const y = STEP.top + i * STEP.h + 13
+    const hue = s.status === 'done' ? HUE.done : s.status === 'active' ? HUE.goal : null
+    const mark = MARK[s.status] || '○'
+    const tail = s.tail ? s.tail : ''
+    const tailW = tail ? textW(tail, STEP.size) + 10 : 0
+    const title = fit(s.title, width - 34 - tailW, STEP.size)
+    const markSvg = hue
+      ? `<text x="12" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(hue, -0.38)};--d:${lighten(hue, 0.25)}">${mark}</text>`
+      : `<text x="12" y="${y}" font-size="${STEP.size}" class="mute">${mark}</text>`
+    const titleSvg = s.status === 'active'
+      ? `<text x="30" y="${y}" font-size="${STEP.size}" class="ink" style="--l:${lighten(HUE.goal, -0.38)};--d:${lighten(HUE.goal, 0.25)}">${esc(title)}</text>`
+      : `<text x="30" y="${y}" font-size="${STEP.size}" class="mute">${esc(title)}</text>`
+    const tailSvg = tail ? `<text x="${width - 12}" y="${y}" font-size="${STEP.size}" text-anchor="end" class="mute">${esc(tail)}</text>` : ''
+    return markSvg + titleSvg + tailSvg
+  })
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${h}" viewBox="0 0 ${width} ${h}" style="color-scheme:light dark;background:transparent">` +
+    HEAD + rows.join('') + `</svg>`
+  return { svg, width, height: h }
+}

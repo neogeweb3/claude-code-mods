@@ -72,7 +72,6 @@ test('collapsed to one row; the steps float in a hover card that moves nothing, 
   })
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
-    expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
     const scope = await ui.find({ type: 'Box', key: 'goal-row' })
     expect(scope).toBeDefined()
     const hidden = JSON.stringify(scope)
@@ -80,10 +79,17 @@ test('collapsed to one row; the steps float in a hover card that moves nothing, 
     expect(hidden).toContain('"position":"absolute"')
     // centred over the row, as if it grew out of it: on the desktop the card hangs off the
     // centred row at its full width; in the terminal a full-width strip centres it
-    expect(hidden).toContain('"width":"100%"')
-    if (surface === 'terminal') expect(hidden).toContain('"justifyContent":"center"')
-    else expect(hidden).not.toContain('"borderStyle"')
-    expect(await ui.find({ type: 'Text', text: '改样式' })).toBeDefined()
+    if (surface === 'terminal') {
+      expect(hidden).toContain('"width":"100%"')
+      expect(hidden).toContain('"justifyContent":"center"')
+      expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
+    } else {
+      // the card is an image exactly as wide as the row image, at its left edge
+      const imgs = await ui.findAll({ type: 'Svg' })
+      expect(imgs).toHaveLength(2)
+      expect(imgs[1]!.props.width).toBe(imgs[0]!.props.width)
+      expect(String(imgs[1]!.props.source)).toContain('改样式')
+    }
     expect(await ui.find({ type: 'Text', text: /^S\b|^L\b/ })).toBeUndefined()
     await ui.unmount()
   }
