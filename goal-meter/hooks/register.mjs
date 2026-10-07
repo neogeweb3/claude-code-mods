@@ -43,6 +43,8 @@ let callsWithoutPlan = 0
 let working = false // a main turn is running
 let turnCalls = 0 // its tool calls so far, the mod's own left out
 let turnNudged = false
+let ops = [] // this turn's tool calls, newest last: the hover card's details while there is no plan
+const OPS_KEEP = 8
 let pendingGoal = null
 let paneOpen = false
 let others = []
@@ -317,6 +319,7 @@ export function register(on) {
     now = await $.clock.now()
     working = true
     turnCalls = 0
+    ops = []
     turnNudged = false
     $.ui.invalidate('ui.render')
     if (pendingGoal && (!G || G.startedAt < pendingGoal.at)) {
@@ -350,15 +353,29 @@ export function register(on) {
 
   on('tool.call', async ($, e, next) => {
     if (e.tool === toolName) return serveTool($, e)
+    let op = null
     if (!e.agentId && e.tool !== 'ToolSearch') {
       turnCalls += 1
+      op = { title: opLabel(e), at: await $.clock.now(), doneAt: 0 }
+      ops = [...ops, op].slice(-OPS_KEEP)
       if (!(G && G.status === 'running')) $.ui.invalidate('ui.render')
+    }
+    // runs the call and marks its row in the card finished
+    const run = async () => {
+      try {
+        return await next(e)
+      } finally {
+        if (op) {
+          op.doneAt = await $.clock.now()
+          if (!(G && G.status === 'running')) $.ui.invalidate('ui.render')
+        }
+      }
     }
     // outside /goal: a turn a few tools deep with no plan gets one reminder, read after this
     // call's result and never shown to the person
     if (!e.agentId && !(G && G.status === 'running') && turnCalls >= AUTO_NUDGE_AT && !turnNudged) {
       turnNudged = true
-      const r = await next(e)
+      const r = await run()
       if (!r || r.deny || !('result' in r)) return r
       return { ...r, context: [...(r.context || []), autoNudge(toolName)] }
     }
@@ -375,7 +392,7 @@ export function register(on) {
         $.ui.invalidate('ui.render')
       }
     }
-    return next(e)
+    return run()
   })
 
   on('agent.spawn', async ($, e, next) => {
@@ -541,6 +558,35 @@ function taskTail(t) {
   return ''
 }
 
+// One tool call as a line of the card: what it did, in a few words
+function opLabel(e) {
+  const short = (v, n = 40) => clip(String(v || '').replace(/\s+/g, ' ').trim(), n)
+  const file = (v) => basename(String(v || '')) || short(v)
+  switch (e.tool) {
+    case 'Bash': return e.description ? short(e.description) : '运行 ' + short(e.command, 32)
+    case 'Read': return '读 ' + file(e.file_path)
+    case 'Edit': case 'MultiEdit': return '改 ' + file(e.file_path)
+    case 'Write': return '写 ' + file(e.file_path)
+    case 'NotebookEdit': return '改 ' + file(e.notebook_path)
+    case 'Grep': return '搜 ' + short(e.pattern, 30)
+    case 'Glob': return '找 ' + short(e.pattern, 30)
+    case 'Agent': case 'Task': return '派 ' + short(e.description || e.subagent_type || 'agent', 32)
+    case 'WebSearch': return '搜网页 ' + short(e.query, 30)
+    case 'WebFetch': return '读网页 ' + short(String(e.url || '').replace(/^https?:\/\//, ''), 30)
+    case 'Skill': return '用 skill ' + short(e.skill, 30)
+    default: {
+      const name = String(e.tool || 'tool')
+      return name.startsWith('mcp__') ? name.split('__').slice(2).join('__') || name : name
+    }
+  }
+}
+
+function opStep(o) {
+  return o.doneAt
+    ? { status: 'done', title: o.title, tail: duration(o.doneAt - o.at), op: true }
+    : { status: 'active', title: o.title, tail: '进行中 ' + duration(now - o.at), op: true }
+}
+
 const ICON = { done: '✓', active: '▶', pending: '○', dropped: '×' }
 
 function taskRow(el, t, width) {
@@ -571,7 +617,10 @@ function drawRow(el, e) {
   const r = rowOf(G ? { ...G, title: mask(G.title), step: mask(currentStep(G)), celebrate } : null, p, t ? t.ms : 0, isRecent(G), work)
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  const steps = G && (r.state === 'running' || r.state === 'planning' || r.state === 'done' || r.state === 'stopped') ? visibleTasks(G) : []
+  const planned = G && (r.state === 'running' || r.state === 'planning' || r.state === 'done' || r.state === 'stopped') ? visibleTasks(G) : []
+  // no plan to show: the card lists this turn's latest operations instead, so hovering always
+  // shows what Claude is doing (Neo, 2026-10-06: a chat with no plan hovered to nothing)
+  const steps = planned.length ? planned : (r.state === 'working' || r.state === 'idle') ? ops.map(opStep) : []
   const list = steps.slice(0, 20).map((s) => stepRow(el, s, Math.min(60, width - 6)))
   // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
   // right above it, as if the row grew upward: absolutely placed, so nothing moves (the surface
@@ -583,7 +632,7 @@ function drawRow(el, e) {
       // the card is drawn at its own size, never wider than the frame the desktop puts round it
       // (so never scaled down), and centred over the row: an absolute Box with no left or right
       // sits where it would in the flow, which alignItems centres
-      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(taskTail(t)) })))
+      const card = stepsSvg(steps.slice(0, 20).map((t) => ({ status: t.status, title: mask(t.title), tail: mask(t.op ? t.tail : taskTail(t)) })))
       kids.push(el.Box({ position: 'absolute', bottom: 1, display: 'none', hover: { display: 'flex' }, children: [el.Svg({ source: card.svg, alt: steps.map((t) => t.title).join(', '), width: card.width, height: card.height })] }))
     }
     return el.Box({ flexDirection: 'row', justifyContent: 'center', paddingX: 1, children: [el.Box({ key: 'goal-row', flexDirection: 'column', alignItems: 'center', children: kids })] })
@@ -600,7 +649,7 @@ const STEP_HUE = { done: '#72cf9f', active: '#e58fb6' }
 
 function stepRow(el, t, width) {
   const { Box, Text } = el
-  const tail = mask(taskTail(t))
+  const tail = mask(t.op ? t.tail : taskTail(t))
   const lead = t.status === 'done'
     ? Text({ color: STEP_HUE.done, children: ['✓ '] })
     : t.status === 'active'

@@ -299,3 +299,35 @@ test('every finished step shows a time, even one marked done without a start', a
   const tails = [...card.matchAll(/text-anchor="end" class="mute">([^<]*)</g)].map(m => m[1])
   expect(tails).toEqual(['3m00s', '10s', '0s'])
 })
+
+test('with no plan, hovering lists the turn\'s latest operations with their times', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const clock = mock.clock(on)
+  const card = async (surface: 'desktop' | 'terminal') => {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface, ...BAND })
+    const out = surface === 'desktop'
+      ? String((await ui.findAll({ type: 'Svg' }))[1]?.props.source ?? '')
+      : JSON.stringify(await ui.find({ type: 'Box', key: 'goal-row' }) ?? null)
+    await ui.unmount()
+    return out
+  }
+  await clock.advance(60000)
+  await $.turn.start({ text: '/handoff', turnId: 't1' })
+  await $.tool.call({ tool: 'Bash', command: 'git log', description: 'Measuring journal loss' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/Users/nge/mods/HANDOFF.md' } as never)
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'show' } as never) // the mod's own call is not an operation
+  const desk = await card('desktop')
+  expect(desk).toContain('Measuring journal loss')
+  expect(desk).toContain('读 HANDOFF.md')
+  expect(desk).not.toContain('tasks')
+  expect(desk).toMatch(/\d+s</)
+  expect(await card('terminal')).toContain('读 HANDOFF.md')
+  // still there to look back on once the turn ends; a new turn starts a fresh list
+  await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
+  expect(await card('desktop')).toContain('读 HANDOFF.md')
+  await $.turn.start({ text: '下一个', turnId: 't2' })
+  expect(await card('desktop')).not.toContain('读 HANDOFF.md')
+})
