@@ -37,18 +37,29 @@ const esc = (v) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, 
  *   Neo, 2026-10-06, "不要显示空闲 … 刚完成任务，那就显示刚完成任务的那个".
  * state: 'working' | 'planning' | 'running' | 'done' | 'stopped' | 'last'
  */
-export function rowOf(g, p, etaMs, work = null, last = null) {
+// How long ago something finished, so an old 完成 is not read as a fresh one
+export function ago(at, nowMs) {
+  const s = Math.max(0, Math.round((nowMs - at) / 1000))
+  if (s < 60) return '刚刚'
+  if (s < 3600) return `${Math.floor(s / 60)} 分钟前`
+  if (s < 86400) return `${Math.floor(s / 3600)} 小时前`
+  const d = new Date(at)
+  return `${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+export function rowOf(g, p, etaMs, work = null, last = null, nowMs = 0) {
+  const when = (at) => (nowMs && at ? ` · ${ago(at, nowMs)}` : '')
   const running = g && g.status === 'running'
   if (!running && work) return { state: 'working', title: '工作中', detail: work.calls ? `${work.calls} 个操作` : '' }
   const planEnd = g && !running ? g.endedAt || g.updatedAt || 0 : 0
   if (!running && last && (!g || last.at > planEnd)) {
-    return { state: 'last', title: '上一轮', figure: '完成 ✓', detail: `${last.calls} 个操作 · 用时 ${minutes(last.ms)}` }
+    return { state: 'last', title: '上一轮', figure: '完成 ✓', detail: `${last.calls} 个操作 · 用时 ${minutes(last.ms)}${when(last.at)}` }
   }
   if (!g) return null
   const title = clip(g.title, 48)
   // done: a full green bar; for its first seconds (`celebrate`) a shine sweeps it
-  if (g.status === 'met') return { state: 'done', title, fraction: 1, celebrate: !!g.celebrate, figure: '完成 ✓', detail: `用时 ${minutes((g.endedAt || 0) - g.startedAt)}` }
-  if (g.status !== 'running') return { state: 'stopped', title, figure: '已停止' }
+  if (g.status === 'met') return { state: 'done', title, fraction: 1, celebrate: !!g.celebrate, figure: '完成 ✓', detail: `用时 ${minutes((g.endedAt || 0) - g.startedAt)}${when(g.endedAt)}` }
+  if (g.status !== 'running') return { state: 'stopped', title, figure: '已停止', detail: when(g.endedAt).replace(/^ · /, '') }
   if (!g.planned && !g.planAt) return { state: 'planning', title, detail: '列步骤中…' }
   return {
     state: 'running',

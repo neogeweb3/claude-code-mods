@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CARD, SCALE, rowOf, rowSpans, rowSvg, stepsSvg, textW } from '../hooks/row.mjs'
+import { CARD, SCALE, ago, rowOf, rowSpans, rowSvg, stepsSvg, textW } from '../hooks/row.mjs'
 
 const BAND = {
   component: 'AbovePrompt',
@@ -335,4 +335,34 @@ test('with no plan, hovering lists the turn\'s latest operations with their time
   expect(await card('desktop')).toContain('读 HANDOFF.md')
   await $.turn.start({ text: '下一个', turnId: 't2' })
   expect(await card('desktop')).not.toContain('读 HANDOFF.md')
+})
+
+test('a finished row says when it finished, so an old 完成 is not read as a fresh one', async ($, on) => {
+  const H = 3600000
+  expect(ago(0, 30000)).toBe('刚刚')
+  expect(ago(0, 5 * 60000)).toBe('5 分钟前')
+  expect(ago(0, 2 * H)).toBe('2 小时前')
+  expect(ago(new Date(2026, 9, 5, 9).getTime(), new Date(2026, 9, 7, 9).getTime())).toBe('10月5日')
+  expect(rowOf(goal({ status: 'met', endedAt: 10 * 60000 }), prog, 0, null, null, 10 * 60000 + 2 * H)!.detail).toBe('用时 10m · 2 小时前')
+  expect(rowOf(null, null, 0, null, { calls: 3, ms: 60000, at: 1000 }, 1000 + 5 * 60000)!.detail).toBe('3 个操作 · 用时 1m · 5 分钟前')
+  // in the app: finish a plan, come back two hours later
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('turn.complete', () => ({ text: '' }))
+  const clock = mock.clock(on)
+  const row = async () => {
+    const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'terminal', ...BAND })
+    const text = JSON.stringify(await ui.find({ type: 'Box' }))
+    await ui.unmount()
+    return text
+  }
+  await clock.advance(60000)
+  await $.turn.start({ text: '做', turnId: 't1' })
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'plan', goal: '小活', tasks: [{ title: '一步', size: 'S' }] } as never)
+  await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'done', id: 1 } as never)
+  await $.turn.complete({ reason: 'answer', answer: '', durationMs: 1, isAborted: false, turnId: 't1' })
+  expect(await row()).toContain('刚刚')
+  await clock.advance(2 * H)
+  expect(await row()).toContain('2 小时前')
 })

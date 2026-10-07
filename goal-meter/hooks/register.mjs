@@ -275,7 +275,8 @@ export function register(on) {
     $.clock.every(15000, async () => {
       now = await $.clock.now()
       if (paneOpen) await loadOthers($)
-      if (paneOpen || (G && (G.status === 'running' || isRecent(G)))) $.ui.invalidate('ui.render')
+      // a finished row says how long ago it finished, so it redraws too
+      if (paneOpen || G || lastTurn) $.ui.invalidate('ui.render')
     })
     $.clock.every(10000, () => readRecording($).catch(() => {}))
     return next(e)
@@ -619,7 +620,7 @@ function drawRow(el, e) {
   const t = G && G.status === 'running' ? eta(G, now) : null
   const work = working && !(G && G.status === 'running') ? { calls: turnCalls } : null
   const celebrate = !!G && G.status === 'met' && now - (G.endedAt || 0) < CELEBRATE_MS
-  const r = rowOf(G ? { ...G, title: mask(G.title), celebrate } : null, p, t ? t.ms : 0, work, lastTurn)
+  const r = rowOf(G ? { ...G, title: mask(G.title), celebrate } : null, p, t ? t.ms : 0, work, lastTurn, now)
   if (!r) return null // a chat that has done nothing yet: no row at all
   const desk = e.surface === 'desktop' || e.surface === 'mobile'
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
