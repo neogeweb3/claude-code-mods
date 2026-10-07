@@ -14,7 +14,7 @@
 // - Each chat writes ~/.claude/mods-data/goal-meter/<session>.json for /goals.
 //   The mod sends no model requests of its own.
 
-import { minutes, clock, clip, bar, basename } from './fmt.mjs'
+import { minutes, duration, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
 import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
 import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, autoNudge, titleOf, currentStep } from './plan.mjs'
@@ -534,9 +534,9 @@ function footerLabel() {
 }
 
 function taskTail(t) {
-  // every finished step shows its time; under a minute reads <1m, not a blank or 0m
-  if (t.status === 'done') return t.doneAt - t.startedAt < 60000 ? '<1m' : minutes(t.doneAt - t.startedAt)
-  if (t.status === 'active') return (t.by ? t.by + ' · ' : '') + '进行中 ' + minutes(now - t.startedAt)
+  // every finished step shows its time, to the second: 42s, 3m05s, 1h02m (Neo asked for seconds)
+  if (t.status === 'done') return duration(t.doneAt - t.startedAt)
+  if (t.status === 'active') return (t.by ? t.by + ' · ' : '') + '进行中 ' + duration(now - t.startedAt)
   if (t.status === 'dropped') return '已放弃' + (t.note ? '：' + t.note : '')
   return ''
 }

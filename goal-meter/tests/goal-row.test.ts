@@ -297,5 +297,5 @@ test('every finished step shows a time, even one marked done without a start', a
   const card = String((await ui.findAll({ type: 'Svg' }))[1]!.props.source)
   await ui.unmount()
   const tails = [...card.matchAll(/text-anchor="end" class="mute">([^<]*)</g)].map(m => m[1])
-  expect(tails).toEqual(['3m', '&lt;1m', '&lt;1m'])
+  expect(tails).toEqual(['3m00s', '10s', '0s'])
 })
