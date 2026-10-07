@@ -1,3 +1,5 @@
+> **Moved / 已迁移**: this fork is archived. usage-band and goal-meter now live together in **[neogeweb3/claude-prompt-band](https://github.com/neogeweb3/claude-prompt-band)**.
+
 # Claude Code mods
 
 > [!NOTE]
