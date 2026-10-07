@@ -61,7 +61,7 @@ test('planning, done and an old finished goal read as they should', async () => 
   expect(rowOf(goal({ status: 'met', endedAt: 1 }), prog, 0, false).state).toBe('idle')
 })
 
-test('collapsed to one row; the steps sit in a hover reveal under it, sizes left out', async ($, on) => {
+test('collapsed to one row; the steps float in a hover card that moves nothing, sizes left out', async ($, on) => {
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
   on('tool.call', () => ({ result: 'engine' }))
   mock.clock(on)
@@ -77,6 +77,7 @@ test('collapsed to one row; the steps sit in a hover reveal under it, sizes left
     expect(scope).toBeDefined()
     const hidden = JSON.stringify(scope)
     expect(hidden).toContain('"display":"none"')
+    expect(hidden).toContain('"position":"absolute"')
     expect(hidden).toContain('"hover":{"display":"flex"}')
     expect(await ui.find({ type: 'Text', text: '读代码' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '改样式' })).toBeDefined()

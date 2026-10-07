@@ -534,18 +534,26 @@ function drawRow(el, e) {
   }
   const steps = G && (G.status === 'running' || isRecent(G)) ? visibleTasks(G) : []
   if (!steps.length) return row
-  // Collapsed to the one row; the steps unfold while the pointer rests on it (the surface does
-  // it, no hook runs) and fold away when the pointer leaves
+  // Collapsed to the one row; while the pointer rests on it the steps show in a card floating
+  // over the transcript above it: absolutely placed, so nothing moves (the surface does it, no
+  // hook runs), and gone again when the pointer leaves
   const width = Math.max(40, (e.props && e.props.bodyColumns) || 100)
-  const list = el.Box({
+  const cardW = Math.min(64, width - 4)
+  const card = el.Box({
+    position: 'absolute',
+    bottom: 1,
+    left: Math.max(0, Math.floor((width - cardW) / 2)),
+    width: cardW,
     display: 'none',
     hover: { display: 'flex' },
     flexDirection: 'column',
-    alignItems: desk ? 'center' : 'flex-start',
-    paddingX: 2,
-    children: steps.slice(0, 20).map((s) => stepRow(el, s, width)),
+    borderStyle: 'round',
+    borderColor: '#e58fb6',
+    backgroundColor: '#1f2228',
+    paddingX: 1,
+    children: steps.slice(0, 20).map((s) => stepRow(el, s, cardW - 4)),
   })
-  return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, list] })
+  return el.Box({ key: 'goal-row', flexDirection: 'column', children: [row, card] })
 }
 
 const STEP_HUE = { done: '#72cf9f', active: '#e58fb6' }
