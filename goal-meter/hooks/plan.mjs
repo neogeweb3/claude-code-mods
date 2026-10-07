@@ -140,6 +140,11 @@ export function listText(goal) {
   return lines.join('\n')
 }
 
+// When the latest finished step ended, else when the plan began; 0 for neither
+function lastFinish(goal) {
+  return goal.tasks.reduce((at, t) => (t.status === 'done' && t.doneAt > at ? t.doneAt : at), goal.planAt || 0)
+}
+
 // One call of the task tool. Returns { ok, text } and changes the goal in place.
 export function applyAction(goal, input, { now, by = '' } = {}) {
   const action = String(input.action || 'show').toLowerCase()
@@ -171,7 +176,9 @@ export function applyAction(goal, input, { now, by = '' } = {}) {
         if (by) t.by = clean(by, 32)
       } else if (action === 'done') {
         t.status = 'done'
-        t.startedAt = t.startedAt || now
+        // never started: it ran from the moment the step before it finished (or the plan began),
+        // not from now, which would leave it no time at all
+        t.startedAt = t.startedAt || lastFinish(goal) || now
         t.doneAt = now
         if (input.note) t.note = clean(input.note, 140)
       } else {
@@ -260,7 +267,7 @@ export function autoPlan(tool) {
     `before your first other tool call, with action "plan", "goal" (a few words naming the whole task, in the user's language) and the steps in order, ` +
     `each with a short title in the user's language and a size S, M or L. ` +
     `This includes picking up earlier work: "continue", resuming from a handoff, or fixing what the user just reported. ` +
-    `Then call "start" with a step's id when you begin it and "done" when it is finished; "add" new steps you discover, ` +
+    `Then call "start" with a step's id when you begin it and "done" when it is finished, one step at a time, each as it happens; "add" new steps you discover, ` +
     `"drop" ones no longer needed. A new, unrelated request gets a new "plan". ` +
     `Skip all of this for quick answers, single lookups and one-step edits.`
   )

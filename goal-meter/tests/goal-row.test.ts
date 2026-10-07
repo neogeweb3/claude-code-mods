@@ -281,3 +281,21 @@ test('the row is drawn at usage-band\'s size; the card at its own larger type, n
   // no margin of its own: the first mark sits at the card's edge
   expect(card.svg).toContain(`x="${CARD.pad}"`)
 })
+
+test('every finished step shows a time, even one marked done without a start', async ($, on) => {
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => $.ui.resolve(e).Box({ children: [] }))
+  on('tool.call', () => ({ result: 'engine' }))
+  const clock = mock.clock(on)
+  const tasks = (action: string, extra = {}) => $.tool.call({ tool: 'mcp__goal-meter__tasks', action, ...extra } as never)
+  await clock.advance(60000)
+  await tasks('plan', { goal: '计时', tasks: [{ title: '甲', size: 'S' }, { title: '乙', size: 'S' }, { title: '丙', size: 'S' }] })
+  await clock.advance(3 * 60000)
+  await tasks('done', { id: 1 }) // never started: timed from the plan's start
+  await clock.advance(10000)
+  await tasks('done', { ids: [2, 3] }) // a batch: the second had no time of its own
+  const ui = await $.ui.mount({ plugin: 'goal-meter', surface: 'desktop', ...BAND })
+  const card = String((await ui.findAll({ type: 'Svg' }))[1]!.props.source)
+  await ui.unmount()
+  const tails = [...card.matchAll(/text-anchor="end" class="mute">([^<]*)</g)].map(m => m[1])
+  expect(tails).toEqual(['3m', '&lt;1m', '&lt;1m'])
+})

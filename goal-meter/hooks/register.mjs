@@ -534,7 +534,8 @@ function footerLabel() {
 }
 
 function taskTail(t) {
-  if (t.status === 'done') return t.doneAt > t.startedAt ? minutes(t.doneAt - t.startedAt) : ''
+  // every finished step shows its time; under a minute reads <1m, not a blank or 0m
+  if (t.status === 'done') return t.doneAt - t.startedAt < 60000 ? '<1m' : minutes(t.doneAt - t.startedAt)
   if (t.status === 'active') return (t.by ? t.by + ' · ' : '') + '进行中 ' + minutes(now - t.startedAt)
   if (t.status === 'dropped') return '已放弃' + (t.note ? '：' + t.note : '')
   return ''
