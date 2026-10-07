@@ -19,7 +19,7 @@
       "name": "goal-meter",
       "source": "./goal-meter",
       "description": "Always-on goal row above the prompt in usage-band style; hover it to see every step. /goals for the full pane.",
-      "version": "1.1.0-neo.5"
+      "version": "1.2.0-neo.1"
     },
     {
       "name": "collision-guard",

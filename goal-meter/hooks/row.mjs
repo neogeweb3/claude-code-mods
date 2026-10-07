@@ -34,7 +34,7 @@ export function rowOf(g, p, etaMs, isRecent) {
   const title = clip(g.title, 40)
   if (g.status === 'met') return { state: 'done', title, figure: 'done ✓', detail: minutes((g.endedAt || 0) - g.startedAt) }
   if (g.status !== 'running') return { state: 'stopped', title, figure: 'stopped' }
-  if (!g.planAt) return { state: 'planning', title, detail: 'planning…' }
+  if (!g.planned && !g.planAt) return { state: 'planning', title, detail: 'planning…' }
   return {
     state: 'running',
     title,

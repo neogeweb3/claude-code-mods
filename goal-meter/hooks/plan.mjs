@@ -144,10 +144,11 @@ export function applyAction(goal, input, { now, by = '' } = {}) {
       // a new plan replaces the work not started yet; finished and running tasks stay
       for (const t of goal.tasks) if (t.status === 'pending') t.replaced = true
     }
-    const first = !goal.planAt
+    const first = !goal.planned && !goal.planAt
     addTasks(goal, list, now, first ? 'plan' : 'later')
     if (first) {
       goal.planAt = now
+      goal.planned = true
       goal.firstPlan = list.length
     }
   } else if (action === 'start' || action === 'done' || action === 'drop') {
@@ -202,6 +203,7 @@ export const TOOL_SPEC = {
     type: 'object',
     properties: {
       action: { type: 'string', enum: ['plan', 'add', 'start', 'done', 'drop', 'show'] },
+      goal: { type: 'string', description: 'For plan: a few words naming the whole task, in the user\'s language; shown on the progress row' },
       tasks: {
         type: 'array',
         description: 'For plan and add: the tasks in order.',
@@ -239,4 +241,19 @@ export function nudge(tool) {
 
 export function strictDeny(tool) {
   return `Goal meter (strict): plan the goal before changing files. Call ${tool} with action "plan" first, then retry this.`
+}
+
+// Sent once in the system prompt (session side of the cache boundary, never changes), so the row
+// fills in without a /goal: Claude plans any multi-step piece of work it takes on
+export function autoPlan(tool) {
+  return (
+    `# Progress row\n` +
+    `The user watches a progress row above the prompt, built from your task plan. ` +
+    `When a request needs several steps of work (roughly three or more steps that use tools), before you start call ${tool} ` +
+    `with action "plan", "goal" (a few words naming the whole task, in the user's language) and the steps in order, ` +
+    `each with a short title in the user's language and a size S, M or L. ` +
+    `Then call "start" with a step's id when you begin it and "done" when it is finished; "add" new steps you discover, ` +
+    `"drop" ones no longer needed. A new, unrelated request gets a new "plan". ` +
+    `Skip all of this for quick answers, single lookups and one-step edits.`
+  )
 }

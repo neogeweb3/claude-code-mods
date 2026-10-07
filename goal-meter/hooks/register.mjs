@@ -15,7 +15,7 @@
 import { minutes, clock, clip, bar, basename } from './fmt.mjs'
 import { makeMasker } from './privacy.mjs'
 import { rowOf, rowSvg, rowSpans, describe, stepsSvg } from './row.mjs'
-import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny } from './plan.mjs'
+import { newGoal, applyAction, progress, eta, parseCheck, isStopWord, normalizeTasks, TOOL_SPEC, instruction, nudge, strictDeny, autoPlan, titleOf } from './plan.mjs'
 
 const DIR = '/.claude/mods-data/goal-meter'
 const PANE = 'goal-meter'
@@ -164,10 +164,14 @@ async function serveTool($, e) {
   now = await $.clock.now()
   const action = String(e.action || 'show').toLowerCase()
   const first = normalizeTasks(e.tasks)[0]
-  if (!G || (G.status !== 'running' && (action === 'plan' || action === 'add'))) {
+  const named = typeof e.goal === 'string' && e.goal.trim() ? e.goal.trim() : ''
+  // a new plan outside /goal: when there is none running, or Claude names a different task
+  const fresh = !G || (G.status !== 'running' && (action === 'plan' || action === 'add')) ||
+    (action === 'plan' && G.kind === 'plan' && named && titleOf(named) !== G.title)
+  if (fresh) {
     if (!first) return { result: `Goal meter: no plan in this chat yet. Call action "plan" with the tasks first, each { "title": "...", "size": "S" | "M" | "L" }.` }
-    // a plan outside /goal: tracked the same way, named after its first task
-    G = newGoal({ sessionId, condition: first.title, now, cwd, kind: 'plan' })
+    // tracked like a /goal, named after the task Claude gave, else its first step
+    G = newGoal({ sessionId, condition: named || first.title, now, cwd, kind: 'plan' })
     hidden = false
   }
   const by = e.by ? String(e.by) : e.agentId ? agentNames.get(e.agentId) || 'agent' : ''
@@ -266,6 +270,17 @@ export function register(on) {
     return next(e)
   })
 
+  // On by default: the system prompt tells Claude to plan any multi-step task with the tool, so
+  // the row fills in without anyone typing /goal. One fixed section, so the prompt cache holds.
+  on('prompt.compose', async ($, e, next) => {
+    const r = await next(e)
+    if (!e.tools.includes(toolName)) return r
+    return { sections: [...r.sections, { id: 'goal-meter:auto-plan', text: autoPlan(toolName), scope: 'session' }] }
+  })
+
+  // The tool sits in Claude's list from the start, not behind ToolSearch
+  on('tool.describe', { tool: 'mcp__goal-meter__tasks' }, async ($, e, next) => ({ ...(await next(e)), isDeferred: false }))
+
   // /goal <condition> starts the meter and asks Claude to plan. The ask rides as
   // the command's hidden note, so the cached prefix is untouched.
   on('command.run', { command: 'goal' }, async ($, e, next) => {
@@ -324,7 +339,7 @@ export function register(on) {
 
   on('tool.call', async ($, e, next) => {
     if (e.tool === toolName) return serveTool($, e)
-    if (G && G.status === 'running' && G.kind === 'goal' && !G.planAt && !e.agentId) {
+    if (G && G.status === 'running' && G.kind === 'goal' && !(G.planned || G.planAt) && !e.agentId) {
       if (settings.strict && WRITERS.has(e.tool)) return { deny: strictDeny(toolName) }
       if (e.tool !== 'ToolSearch') callsWithoutPlan += 1
       if (callsWithoutPlan >= NUDGE_AFTER && !nudged) {
@@ -457,7 +472,7 @@ function paused(g) {
 function headline(g, p) {
   if (g.status === 'met') return `done ✓ in ${minutes((g.endedAt || now) - g.startedAt)}`
   if (g.status !== 'running') return 'stopped'
-  if (!g.planAt) return 'planning…'
+  if (!(g.planned || g.planAt)) return 'planning…'
   return `${p.doneN} of ${p.n} tasks · ${p.pct}%`
 }
 
@@ -467,7 +482,7 @@ function statsLine(g, p) {
     parts.push(`${minutes(now - g.startedAt)} elapsed`)
     const t = eta(g, now)
     if (t) parts.push(`about ${minutes(t.ms)} left (≈${clock(t.at)})`)
-    else if (g.planAt && p.doneN < 2) parts.push('ETA after 2 tasks finish')
+    else if ((g.planned || g.planAt) && p.doneN < 2) parts.push('ETA after 2 tasks finish')
   }
   if (g.firstPlan && p.n > g.firstPlan) parts.push(`plan grew ${g.firstPlan} → ${p.n}`)
   if (runningAgents.size && g.status === 'running') parts.push(`${runningAgents.size} agent${runningAgents.size === 1 ? '' : 's'} running`)
@@ -481,7 +496,7 @@ function footerLabel() {
   if (!G) return ''
   const word = G.kind === 'plan' ? 'plan' : 'goal'
   if (G.status === 'running') {
-    if (!G.planAt) return `◎ ${word} · planning`
+    if (!(G.planned || G.planAt)) return `◎ ${word} · planning`
     const p = progress(G)
     const t = eta(G, now)
     return `◎ ${word} ${p.pct}%` + (t ? ` · ~${minutes(t.ms)}` : ` · ${p.doneN}/${p.n}`)
@@ -579,7 +594,7 @@ function otherRow(el, g, width) {
   let tail
   if (g.status === 'met') tail = 'done ✓'
   else if (g.status !== 'running') tail = 'stopped'
-  else if (!g.planAt) tail = 'planning'
+  else if (!(g.planned || g.planAt)) tail = 'planning'
   else {
     const t = eta(g, now)
     tail = `${p.pct}% · ${t ? '~' + minutes(t.ms) : p.doneN + '/' + p.n}`
