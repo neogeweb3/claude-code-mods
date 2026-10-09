@@ -124,7 +124,7 @@ test('a running plan is one row: the whole title, a band-length bar, done of tot
   const spans = rowSpans(r!, 120)
   expect(spans.map(s => s.text).join('')).toBe('◎ 测试全绿并提交  ■■■■■■■■■■  2/4 · 50% · 剩约 8m')
   // a long title is kept far longer than before (16 with a step name beside it)
-  expect(rowOf(goal({ title: '接 V35：核 10-05 数据丢失并找 memvault end 删文件的路径' }), prog, 0)!.title).toBe('接 V35：核 10-05 数据丢失并找 memvault end 删文件的路径')
+  expect(rowOf(goal({ title: '接 V12：核 03-12 报表数据并找 exporter crons 出错的位置' }), prog, 0)!.title).toBe('接 V12：核 03-12 报表数据并找 exporter crons 出错的位置')
 })
 
 test('task sizes (S, M, L) never reach the row', async () => {
@@ -322,7 +322,7 @@ test('with no plan, hovering lists the turn\'s latest operations with their time
   await clock.advance(60000)
   await $.turn.start({ text: '/handoff', turnId: 't1' })
   await $.tool.call({ tool: 'Bash', command: 'git log', description: 'Measuring journal loss' } as never)
-  await $.tool.call({ tool: 'Read', file_path: '/Users/nge/mods/HANDOFF.md' } as never)
+  await $.tool.call({ tool: 'Read', file_path: '/Users/me/project/HANDOFF.md' } as never)
   await $.tool.call({ tool: 'mcp__goal-meter__tasks', action: 'show' } as never) // the mod's own call is not an operation
   const desk = await card('desktop')
   expect(desk).toContain('Measuring journal loss')
